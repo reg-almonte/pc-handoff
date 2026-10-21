@@ -82,7 +82,16 @@ class UsagePeriod:
 
 @dataclass(frozen=True)
 class TrackedSession:
-    """In-memory record of one user session, as held by the tracker between polls."""
+    """In-memory record of one user session, as held by the tracker between polls.
+
+    The last two fields are tracker bookkeeping, never persisted (``StatusSession`` does
+    not carry them):
+
+    - ``lastKnownConnectTime``: the last non-null connect time reported for this identity,
+      the basis for detecting a changed connect time (Critic TASK-004 M3).
+    - ``outagePriorPollAt``: set while the session holds an outage context through
+      transitional polls; the ``lastSuccessfulPollAt`` from before the outage (M2).
+    """
 
     sessionId: int
     userName: str
@@ -98,6 +107,8 @@ class TrackedSession:
     disconnectedSince: datetime | None
     openPeriod: UsagePeriod | None
     consecutiveTransitionalPolls: int = 0
+    lastKnownConnectTime: datetime | None = None
+    outagePriorPollAt: datetime | None = None
 
 
 # --- JSON helpers -------------------------------------------------------------------------

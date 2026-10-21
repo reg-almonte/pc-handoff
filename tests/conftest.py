@@ -52,3 +52,11 @@ def capturedAppLog() -> Iterator[Callable[[], list[dict]]]:
     finally:
         logger.removeHandler(handler)
         logger.setLevel(originalLevel)
+
+
+@pytest.fixture
+def tracker(fakeClock: FakeClock):
+    """A ``SessionTracker`` on ``fakeClock`` logging under ``pc_handoff.domain.tracker``."""
+    from pc_handoff.domain.tracker import SessionTracker
+
+    return SessionTracker(fakeClock, logging.getLogger(f"{LOGGER_NAME}.domain.tracker"))
