@@ -1,0 +1,43 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "pc-handoff"
+version = "0.1.0"
+description = "Shared PC status monitoring: session detection, local JSON persistence and a Streamlit status dashboard."
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+    "streamlit>=1.40,<2",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8",
+    "pytest-cov>=5",
+    "ruff>=0.6",
+]
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+markers = ["windows", "perf", "slow"]
+addopts = "-m 'not perf' --cov=pc_handoff --cov-branch --cov-report=term-missing --cov-report=json:coverage.json --cov-fail-under=86"
+
+[tool.coverage.run]
+branch = true
+source = ["pc_handoff"]
+omit = [
+    "*/pc_handoff/detection/wts_binding.py",
+    "*/pc_handoff/server_launcher.py",
+]
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "B", "I", "UP", "SIM"]
