@@ -301,6 +301,20 @@ class TestM2OutageContextKeptWhileTransitional:
         assert start.reason is EventReason.DETECTED_AFTER_OUTAGE
         assert start.usagePeriodStart == c2
 
+    def test_context_records_its_reason(self, tracker, fakeClock):
+        """Critic TASK-008 M1: the context carries its reason (here the outage one)."""
+        _, p, state = self.outageThenTransitional(tracker, fakeClock)
+        alice = state.sessions[2]
+        assert alice.outagePriorPollAt == p
+        assert alice.blindReason is EventReason.DETECTED_AFTER_OUTAGE
+
+    def test_transitional_without_a_blind_context_records_none(self, tracker, fakeClock):
+        state = tracker.applySuccess(tracker.initialState(), [osSession(2, "alice")]).state
+        fakeClock.advance(5)
+        state = tracker.applySuccess(state, [osSession(2, "alice", "Shadow")]).state
+        assert state.sessions[2].outagePriorPollAt is None
+        assert state.sessions[2].blindReason is None
+
     def test_other_sessions_on_the_next_poll_are_observed(self, tracker, fakeClock):
         _, _, state = self.outageThenTransitional(tracker, fakeClock)
         outcome = tracker.applySuccess(

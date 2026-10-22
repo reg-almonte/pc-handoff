@@ -285,13 +285,15 @@ class SessionTracker:
 
     @staticmethod
     def sessionContext(previous: TrackedSession, ctx: PollContext) -> PollContext:
-        """Critic TASK-004 M2: a session that stayed transitional since an outage is still
-        judged as after that outage, against the last successful poll from before it."""
-        if previous.outagePriorPollAt is None:
+        """Critic TASK-004 M2, generalized by Critic TASK-008 M1: a session that stayed
+        transitional since a gap the tracker did not see (an outage, or the downtime before a
+        restart) is still judged with that gap's reason and against its P: the last
+        successful poll before the outage, or the persisted one before the restart."""
+        if previous.blindReason is None:
             return ctx
         return replace(
             ctx,
-            reason=EventReason.DETECTED_AFTER_OUTAGE,
+            reason=previous.blindReason,
             lastSuccessfulPollAt=previous.outagePriorPollAt,
         )
 
@@ -336,8 +338,9 @@ class SessionTracker:
     ) -> TrackedSession:
         """R3: keep the previous record, count the poll, warn every N consecutive polls.
 
-        During (or still after) an outage the session keeps the outage context until its
-        next definite state (Critic TASK-004 M2).
+        In any context other than ``observed`` (after an outage, at startup, or still
+        holding such a context) the session keeps that context, reason and P, until its next
+        definite state (Critic TASK-004 M2, TASK-008 M1).
         """
         count = previous.consecutiveTransitionalPolls + 1
         if count % self.transitionalWarnPolls == 0:
@@ -350,11 +353,12 @@ class SessionTracker:
                 count,
                 previous.state.value,
             )
-        afterOutage = ctx.reason is EventReason.DETECTED_AFTER_OUTAGE
+        blind = ctx.reason is not EventReason.OBSERVED
         return replace(
             previous,
             consecutiveTransitionalPolls=count,
-            outagePriorPollAt=ctx.lastSuccessfulPollAt if afterOutage else None,
+            outagePriorPollAt=ctx.lastSuccessfulPollAt if blind else None,
+            blindReason=ctx.reason if blind else None,
         )
 
     def toDisconnected(
@@ -475,7 +479,7 @@ class SessionTracker:
     def refreshed(self, previous: TrackedSession, session: OsSession) -> TrackedSession:
         """R4: the mutable fields from this poll; identity fields are kept.
 
-        A definite state also ends any outage context (M2), and a null connect time keeps
+        A definite state also ends any blind context (M2, M1), and a null connect time keeps
         the last known one as the comparison basis (M3).
 
         This is the single place where a policy such as "keep the previous connectionType
@@ -495,6 +499,7 @@ class SessionTracker:
                 else session.connectTime
             ),
             outagePriorPollAt=None,
+            blindReason=None,
         )
 
     def startPeriod(
