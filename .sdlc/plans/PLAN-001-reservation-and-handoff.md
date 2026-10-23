@@ -71,7 +71,7 @@ graph TD
 
 ### Phase 1: Domain Models, State Machines & Validation Schemas
 
-#### [ ] `TASK-012`: Reservation Domain Models, State Machine & Validation Schemas
+#### [x] `TASK-012`: Reservation Domain Models, State Machine & Validation Schemas
 - **Branch**: `feature/task012-reservation-domain-models`
 - **Labels**: `type:feature`, `area:runtime`, `area:persistence`
 - **Files**:
