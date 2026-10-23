@@ -28,7 +28,7 @@ from pc_handoff.domain.models import (
 )
 from pc_handoff.domain.tracker import SessionTracker, TrackerState
 from pc_handoff.persistence.activity_log_store import serializeCanonical
-from pc_handoff.persistence.config_store import DEFAULT_CONFIG_BYTES
+from pc_handoff.persistence.config_store import DEFAULT_CONFIG_BYTES, loadConfig
 from pc_handoff.persistence.paths import DataPaths
 from pc_handoff.persistence.schemas import (
     decodeJson,
@@ -768,6 +768,37 @@ class TestLoadingOrderAndNotices:
 
 
 # --- pendingDisplayState -------------------------------------------------------------------
+
+
+class TestPreloadedConfig:
+    """TASK-009 S8: the launcher loads config.json first (to check the dashboard port before
+    any other data file is touched) and hands the result to ``loadStartup``."""
+
+    def test_a_preloaded_config_is_used_and_config_json_is_not_read_again(
+        self, dataDir, clock, logger, monkeypatch
+    ):
+        (dataDir / "config.json").write_text("not json", encoding="utf-8")  # corrupt
+        configResult = loadConfig(DataPaths(dataDir), clock, logger)
+        assert configResult.notice is not None  # backed up and reset by loadConfig itself
+        backups = sorted(p.name for p in dataDir.glob("config.json.corrupt-*"))
+
+        def noSecondRead(*args, **kwargs):
+            pytest.fail("config.json was read a second time")
+
+        monkeypatch.setattr("pc_handoff.persistence.startup_loader.loadConfig", noSecondRead)
+        ctx = loadStartup(DataPaths(dataDir), clock, logger, configResult=configResult)
+
+        assert ctx.config == configResult.config
+        assert ctx.notices == (configResult.notice,)
+        assert sorted(p.name for p in dataDir.glob("config.json.corrupt-*")) == backups
+        assert (dataDir / "activity_log.json").read_bytes() == EMPTY_LOG
+
+    def test_without_a_preloaded_config_it_is_loaded_as_before(self, dataDir, clock, logger):
+        (dataDir / "config.json").write_text(
+            '{"schemaVersion": 1, "dashboardPort": 9000}', encoding="utf-8"
+        )
+        ctx = load(dataDir, clock, logger)
+        assert ctx.config.dashboardPort == 9000
 
 
 class TestPendingDisplayState:

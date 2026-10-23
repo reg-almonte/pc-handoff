@@ -37,7 +37,7 @@ from pc_handoff.domain.reconciliation import (
 from pc_handoff.domain.tracker import PollOutcome, SessionTracker, TrackerState
 from pc_handoff.persistence.activity_log_store import ActivityLogStore
 from pc_handoff.persistence.atomic import cleanupTempFiles
-from pc_handoff.persistence.config_store import Config, loadConfig
+from pc_handoff.persistence.config_store import Config, ConfigLoadResult, loadConfig
 from pc_handoff.persistence.notices import StartupNotice
 from pc_handoff.persistence.paths import ACTIVITY_LOG_FILE_NAME, STATUS_FILE_NAME, DataPaths
 from pc_handoff.persistence.status_store import StatusStore
@@ -81,11 +81,22 @@ class StartupContext:
         return () if self.statusDocument is None else self.statusDocument.sessions
 
 
-def loadStartup(paths: DataPaths, clock: Clock, logger: logging.Logger) -> StartupContext:
+def loadStartup(
+    paths: DataPaths,
+    clock: Clock,
+    logger: logging.Logger,
+    configResult: ConfigLoadResult | None = None,
+) -> StartupContext:
     """Load every data file once and choose the open-period source. Never raises for file
-    problems; each store reports them through notices and the app log."""
+    problems; each store reports them through notices and the app log.
+
+    ``configResult`` is a ``loadConfig`` result the caller already has: the launcher loads
+    ``config.json`` first to check the dashboard port before any other data file is touched
+    (TASK-009 S8), and it is not read again here.
+    """
     cleanupTempFiles(paths.dataDir, logger)
-    configResult = loadConfig(paths, clock, logger)
+    if configResult is None:
+        configResult = loadConfig(paths, clock, logger)
     statusStore = StatusStore(paths, clock, logger)
     statusResult = statusStore.loadAtStartup()
     activityStore = ActivityLogStore(paths, clock, logger)

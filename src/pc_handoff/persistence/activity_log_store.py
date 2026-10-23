@@ -23,7 +23,8 @@ canonically without a backup (event values unchanged, bytes may change).
 0. The batch joins ``pendingEvents`` first; the working list is the whole queue.
 1. Outer check: fast path when the file bytes equal ``lastWrittenBytes`` (no parse); slow
    path otherwise (parse, ``checkActivityOuter``, rebuild the index). A damaged file is
-   backed up and a fresh document started; a missing file is recreated.
+   backed up and a fresh document started; a missing file is recreated (its notice is
+   returned only by the write that actually recreates it, Critic TASK-009 B1).
 2. Pairing guard (``screenEvents``) over the working list.
 3. New bytes and cache values are computed before any I/O.
 4. Atomic replace; then the cache is assigned (``pairIndex``, ``fileEventKeys``,
@@ -252,7 +253,9 @@ class ActivityLoadResult:
 class AppendResult:
     """``written`` is True when the call ended with nothing pending (every accepted event is
     in the file, or there was nothing to write). ``notice`` is a runtime notice for the
-    dashboard: the file was damaged and backed up, or was missing and has been recreated."""
+    dashboard: the file was damaged and backed up (returned even if the write after the
+    backup failed), could not be backed up (once per episode), or was missing and has been
+    recreated (returned only with ``written`` True, by the write that recreated it)."""
 
     written: bool
     notice: StartupNotice | None = None
@@ -271,6 +274,8 @@ class LogBase:
     notice: StartupNotice | None = None
     # True when the file must be backed up first and that failed: nothing may be written.
     blocked: bool = False
+    # Returned only if this call's write succeeds: the missing-file notice (Critic TASK-009 B1).
+    noticeIfWritten: StartupNotice | None = None
 
 
 class ActivityLogStore:
@@ -289,6 +294,13 @@ class ActivityLogStore:
     every ``backupFailureLogEvery``-th failure after it (attempts 1, 1+N, 1+2N, ...) is
     logged at ERROR with the attempt count and the others at DEBUG. The end of an episode is
     logged at INFO with the number of failed attempts.
+
+    **Missing at runtime (Critic TASK-009 B1).** A log deleted while running opens a missing
+    episode: its WARNING is logged by the first append that finds the file gone, and later
+    attempts while the recreating write keeps failing are logged at DEBUG. The notice "was
+    missing and has been recreated" is returned only by the write that recreates the file,
+    so it is true when shown and appears once per episode. If the file reappears before that
+    (put back by someone else), the episode ends with one INFO line and no notice.
     """
 
     # 60 polls at the default 5 s interval: about one ERROR line every 5 minutes.
@@ -311,6 +323,9 @@ class ActivityLogStore:
         # Why startup rejected the file when it could not be backed up; while set, the file
         # is never adopted and every append retries the backup (S4).
         self.rejectedAtStartup: str | None = None
+        # True from the first append that finds the file deleted while running until a write
+        # recreates it or the file reappears (Critic TASK-009 B1).
+        self.missingAtRuntime = False
 
     # --- startup ----------------------------------------------------------------------------
 
@@ -479,7 +494,8 @@ class ActivityLogStore:
                 return AppendResult(False, base.notice)
         self.commitCache(newIndex, newKeys, newCount, newBytes)
         self.pendingEvents = []
-        return AppendResult(True, base.notice)
+        notice = base.notice if base.notice is not None else base.noticeIfWritten
+        return AppendResult(True, notice)
 
     def currentBase(self, path: Path, raw: bytes | None) -> LogBase:
         """Step 1: the runtime outer check.
@@ -492,12 +508,25 @@ class ActivityLogStore:
             if self.missingExpected:
                 self.logger.info("%s does not exist; it is created now", ACTIVITY_LOG_FILE_NAME)
                 return LogBase(False, {}, set(), 0)
-            self.logger.warning(
-                "%s was missing while running; a new file is started", ACTIVITY_LOG_FILE_NAME
-            )
+            if self.missingAtRuntime:
+                self.logger.debug(
+                    "%s is still missing; recreating it is retried", ACTIVITY_LOG_FILE_NAME
+                )
+            else:
+                self.missingAtRuntime = True
+                self.logger.warning(
+                    "%s was missing while running; a new file is started", ACTIVITY_LOG_FILE_NAME
+                )
             text = f"{ACTIVITY_LOG_FILE_NAME} was missing and has been recreated"
             notice = StartupNotice(ACTIVITY_LOG_FILE_NAME, None, text)
-            return LogBase(False, {}, set(), 0, notice=notice)
+            return LogBase(False, {}, set(), 0, noticeIfWritten=notice)
+
+        if self.missingAtRuntime:
+            self.missingAtRuntime = False
+            self.logger.info(
+                "%s is present again; the missing-file episode ends without a notice",
+                ACTIVITY_LOG_FILE_NAME,
+            )
 
         if self.rejectedAtStartup is not None:
             # S4: known to be invalid; never adopted, whatever its outer structure.
@@ -608,6 +637,7 @@ class ActivityLogStore:
         index (Critic iteration-3 N2).
         """
         self.missingExpected = False
+        self.missingAtRuntime = False
         self.pairIndex = pairIndex
         self.fileEventKeys = fileEventKeys
         self.eventCount = eventCount

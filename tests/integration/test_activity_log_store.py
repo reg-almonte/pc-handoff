@@ -1483,3 +1483,88 @@ class TestRejectedAtStartup:
         # The file is valid again: the next append uses the normal paths.
         store.appendBatch([startEvent(newId(), T0 + timedelta(minutes=2))])
         assert len(env.eventIds()) == 2
+
+
+class TestMissingAtRuntime:
+    """A log deleted while running whose recreation keeps failing (Critic TASK-009 B1).
+
+    The "missing ... recreated" notice is returned only by the write that recreates the
+    file, so a failing recreation can never add a notice per poll. The WARNING is logged once
+    per missing episode; later failed attempts log at DEBUG.
+    """
+
+    MISSING_TEXT = "activity_log.json was missing and has been recreated"
+
+    def test_no_notice_until_the_recreating_write_succeeds(
+        self, env: Env, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        store = env.started(makeEvents(2))
+        env.path.unlink()
+        monkeypatch.setattr(
+            activity_log_store, "atomicWriteBytes", failingWrite(PersistenceError("locked"))
+        )
+        event = startEvent(newId(), T0)
+
+        results = [store.appendBatch([event])] + [store.appendBatch([]) for _ in range(4)]
+
+        assert results == [AppendResult(False, None)] * 5
+        assert not env.path.exists()
+        assert store.pendingEvents == [event]
+        warnings = [m for m in env.messages("WARNING") if "was missing while running" in m]
+        assert len(warnings) == 1
+        assert len([m for m in env.messages("DEBUG") if "still missing" in m]) == 4
+
+        monkeypatch.setattr(activity_log_store, "atomicWriteBytes", atomic.atomicWriteBytes)
+        recreated = store.appendBatch([])
+        assert recreated == AppendResult(
+            True, StartupNotice("activity_log.json", None, self.MISSING_TEXT)
+        )
+        assert env.eventIds() == [event.eventId]
+        env.assertValid()
+        # The episode is over: the next append has no notice, and the file this store wrote
+        # is not mistaken for one that reappeared on its own.
+        assert store.appendBatch([startEvent(newId(), T0 + timedelta(minutes=1))]) == (
+            AppendResult(True, None)
+        )
+        assert len(env.eventIds()) == 2
+        assert not any("is present again" in m for m in env.messages("INFO"))
+
+    def test_a_log_that_reappears_ends_the_episode_without_a_notice(
+        self, env: Env, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        store = env.started(makeEvents(2))
+        restored = env.raw()
+        env.path.unlink()
+        monkeypatch.setattr(
+            activity_log_store, "atomicWriteBytes", failingWrite(PersistenceError("locked"))
+        )
+        event = startEvent(newId(), T0)
+        assert store.appendBatch([event]) == AppendResult(False, None)
+
+        env.path.write_bytes(restored)  # put back by someone else: nothing was recreated
+        monkeypatch.setattr(activity_log_store, "atomicWriteBytes", atomic.atomicWriteBytes)
+        assert store.appendBatch([]) == AppendResult(True, None)
+        assert env.eventIds()[2:] == [event.eventId]
+        assert any("is present again" in m for m in env.messages("INFO"))
+
+        # A later deletion is a new episode: a new WARNING, and a notice once recreated.
+        env.path.unlink()
+        assert store.appendBatch([]) == AppendResult(
+            True, StartupNotice("activity_log.json", None, self.MISSING_TEXT)
+        )
+        warnings = [m for m in env.messages("WARNING") if "was missing while running" in m]
+        assert len(warnings) == 2
+
+    def test_other_notices_still_come_with_a_failed_write(
+        self, env: Env, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # Only the missing-file notice waits for a successful write; a backup notice is
+        # returned even though the write after it fails (the runtime must not filter).
+        store = env.started(makeEvents(2))
+        env.path.write_bytes(b"not json")
+        monkeypatch.setattr(
+            activity_log_store, "atomicWriteBytes", failingWrite(PersistenceError("locked"))
+        )
+        result = store.appendBatch([startEvent(newId(), T0)])
+        assert result.written is False
+        assert result.notice is not None and result.notice.backupName == BACKUP_NAME

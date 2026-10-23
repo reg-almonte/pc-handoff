@@ -25,11 +25,14 @@ where = ["src"]
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 markers = ["windows", "perf", "slow"]
-addopts = "-m 'not perf' --cov=pc_handoff --cov-branch --cov-report=term-missing --cov-report=json:coverage.json --cov-fail-under=86"
+addopts = "-m 'not perf' --cov=src/pc_handoff --cov-branch --cov-report=term-missing --cov-report=json:coverage.json --cov-fail-under=86"
 
 [tool.coverage.run]
 branch = true
-source = ["pc_handoff"]
+# A directory, not the package name: files are then selected by path, so the Streamlit page
+# (run by Streamlit as __main__, not imported as pc_handoff.ui.dashboard) is measured too.
+# Run pytest from external/.
+source = ["src/pc_handoff"]
 omit = [
     "*/pc_handoff/detection/wts_binding.py",
     "*/pc_handoff/server_launcher.py",
