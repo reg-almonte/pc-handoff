@@ -2,9 +2,9 @@
 
 PC Handoff runs on the shared Windows PC as one Python process. It does three things:
 
-- It polls the Windows session list.
+- It polls the Windows session list and correlates active sessions with the reservation queue.
 - It derives the PC status: `Available`, `In Use`, or `Unknown` when detection fails.
-- It writes three local JSON files and serves a status dashboard to the LAN.
+- It writes four local JSON files (`config.json`, `status.json`, `activity_log.json`, `reservations.json`) and serves a status, reservation and handoff dashboard to the LAN.
 
 This guide is for the person who installs, runs and looks after it. The file formats are in
 [data-files.md](data-files.md). The checks that must be done by hand on the shared PC are in
@@ -111,7 +111,7 @@ use them in production.
 | 3 | Another PC Handoff instance already holds the lock on this data directory. | Nothing; one instance is already running. Its data files were not touched. |
 | 4 | The lock file or the data directory is unavailable: it cannot be created or opened (for example, a permission problem or a path that is a file). | Fix the path or the permissions of the data directory. |
 | 5 | The Python version is older than 3.11. | Install Python 3.11 or later. |
-| 6 | The dashboard port is already in use. The application stopped after reading `config.json` (the port comes from it, so `config.json` is created with the defaults if it was missing, or backed up and reset if it was corrupt; see L18) and before `status.json` and `activity_log.json` were read, backed up or created. No poll ran. `app.log` gets the INFO lines `PC Handoff starting` and `PC Handoff stopped` and one ERROR line, `dashboard port in use`. | Configure a free `dashboardPort` (section 4), or stop the program that holds the port. |
+| 6 | The dashboard port is already in use. The application stopped after reading `config.json` (the port comes from it, so `config.json` is created with the defaults if it was missing, or backed up and reset if it was corrupt; see L18) and before `status.json` and `activity_log.json` were read, backed up or created. No poll ran. `app.log` gets, among others, the INFO lines `PC Handoff starting` and `PC Handoff stopped`, one ERROR line `dashboard port in use`, and when applicable `config.json was missing and has been created with defaults` or `config.json backed up as config.json.corrupt-...`. | Configure a free `dashboardPort` (section 4), or stop the program that holds the port. |
 
 ## 4. Configuration (`config.json`)
 
@@ -214,7 +214,8 @@ L10 below.
 | :--- | :--- |
 | `config.json` | Settings (section 4). |
 | `status.json` | The current status snapshot, rewritten from memory after every poll. |
-| `activity_log.json` | The audit log of usage periods. It only grows. |
+| `activity_log.json` | The audit log of usage periods, reservations, handoffs and status notes. It only grows. |
+| `reservations.json` | The current reservation queue, handoff state and active broadcast status notes, rewritten atomically on state changes. |
 | `logs/app.log` | The application log (section 8). |
 | `pc-handoff.lock` | The single-instance lock file (section 7). Never deleted. |
 | `<file>.corrupt-<yyyyMMddTHHmmss>[-n]` | A damaged file, kept with its bytes unchanged before it was replaced. The time is host-local. `-2`, `-3` and so on are added when two backups fall in the same second. |

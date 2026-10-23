@@ -733,7 +733,7 @@ class TestHelpers:
     def test_data_dir_option_then_environment_then_default(self, tmp_path, monkeypatch):
         monkeypatch.delenv(launcher.DATA_DIR_ENV, raising=False)
         assert launcher.resolveDataDir(None) == launcher.DEFAULT_DATA_DIR
-        assert launcher.DEFAULT_DATA_DIR.parent.name == "external"
+        assert launcher.DEFAULT_DATA_DIR.parent == Path(__file__).resolve().parents[2]
         monkeypatch.setenv(launcher.DATA_DIR_ENV, str(tmp_path / "env"))
         assert launcher.resolveDataDir(None) == tmp_path / "env"
         assert launcher.resolveDataDir(str(tmp_path / "opt")) == tmp_path / "opt"

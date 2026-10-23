@@ -1,9 +1,9 @@
 # PC Handoff data files
 
-The data directory holds three JSON files: `config.json`, `status.json` and
-`activity_log.json`. This document describes their formats for people who read them, such
+The data directory holds four JSON files: `config.json`, `status.json`,
+`activity_log.json` and `reservations.json`. This document describes their formats for people who read them, such
 as a team lead reviewing usage. The validators that enforce these rules are in
-`src/pc_handoff/persistence/schemas.py` and `config_store.py` (ADR-005). Operating guidance
+`src/pc_handoff/persistence/schemas.py` and `config_store.py` (ADR-005, DEC-010). Operating guidance
 is in [operations.md](operations.md).
 
 ## 1. Rules for every file
@@ -209,6 +209,35 @@ The audit trail of **usage periods**.
 | `durationSeconds` | integer >= 0 | yes | `periodEnd - usagePeriodStart` in whole seconds. |
 | `endCause` | string | no | `disconnect`, `logoff`, `reconnect_detected`, or `unknown` (defensive; not produced in practice). |
 
+### Reservation, handoff and status note event fields (`REQ-002` / `DEC-010`)
+
+Reservation and handoff events (`reservation_queued`, `reservation_cancelled`, `handoff_initiated`, `handoff_claimed`, `reservation_expired`) carry:
+
+| Key | Type | Null | Meaning |
+| :--- | :--- | :--- | :--- |
+| `eventId` | UUID | no | Unique per event. |
+| `eventType` | string | no | `reservation_queued`, `reservation_cancelled`, `handoff_initiated`, `handoff_claimed`, or `reservation_expired`. |
+| `timestamp` | timestamp | no | When the event was recorded. |
+| `reservationId` | UUID | no | The reservation this event belongs to. |
+| `userName` | string | no | Not empty (`1..64` chars). |
+| `requestedDurationMinutes` | integer | no | `5..480`. |
+| `reason` | string | no | `observed`, `detected_after_outage`, or `detected_at_startup`. |
+| `offeredByUserName` | string | yes | User who initiated handoff (`null` when auto-offered or not applicable). |
+| `notes` | string | yes | Optional user note (`<= 280` chars). |
+
+`status_note_posted` events carry:
+
+| Key | Type | Null | Meaning |
+| :--- | :--- | :--- | :--- |
+| `eventId` | UUID | no | Unique per event. |
+| `eventType` | string | no | `status_note_posted`. |
+| `timestamp` | timestamp | no | When the note was posted. |
+| `noteId` | UUID | no | Unique identifier of the status note. |
+| `userName` | string | no | Author of the note (`1..64` chars). |
+| `message` | string | no | Note text (`1..280` chars). |
+| `expiresAt` | timestamp | no | When the note expires. |
+| `reason` | string | no | Always `observed`. |
+
 **End times.**
 
 - **A transition the application saw directly**, Active at one poll and Disconnected or gone
@@ -298,7 +327,34 @@ pass validation:
 The application never writes them. Rejecting them would reset the whole log, and with it
 the open periods, over fields that reconciliation never reads.
 
-## 5. `pc-handoff.lock`
+## 5. `reservations.json`
+
+A snapshot of the reservation queue, active ownership handoff offer, and broadcast status notes (`DEC-010`). Like `status.json`, it is fully validated at startup (a corrupt file is backed up to `reservations.json.corrupt-<timestamp>` and reported with a dashboard notice) and rewritten atomically from memory whenever the queue, handoff state, or status notes change.
+
+| Key | Type | Null | Meaning |
+| :--- | :--- | :--- | :--- |
+| `schemaVersion` | integer | no | Always 1. |
+| `updatedAt` | timestamp | no | When this snapshot was written. |
+| `handoff` | object | no | Current ownership handoff state (`IDLE`, `OFFERED`, `CLAIMED`, `TIMED_OUT`). |
+| `reservations` | array | no | Ordered list of reservations (`QUEUED`, `READY`, `ACTIVE`, and up to 20 recent terminal entries). |
+| `statusNotes` | array | no | Active (non-expired) status notes, up to 10 entries. |
+
+Each `reservations[]` entry:
+
+| Key | Type | Null | Meaning |
+| :--- | :--- | :--- | :--- |
+| `reservationId` | UUID | no | Unique reservation ID. |
+| `userName` | string | no | `1..64` characters, non-empty. |
+| `requestedDurationMinutes` | integer | no | `5..480`. |
+| `queuedAt` | timestamp | no | When the user joined the queue. |
+| `status` | string | no | `QUEUED`, `READY`, `ACTIVE`, `COMPLETED`, `CANCELLED`, or `EXPIRED`. |
+| `notes` | string | yes | Optional user note (`<= 280` chars). |
+| `readyAt` | timestamp | when not READY/ACTIVE | When the reservation was promoted to `READY`. |
+| `claimExpiresAt` | timestamp | when not READY | When the `READY` claim grace period expires (`null` once `ACTIVE` or terminal). |
+| `activatedAt` | timestamp | when not ACTIVE | When the reservation transitioned to `ACTIVE`. |
+| `endedAt` | timestamp | when non-terminal | When the reservation reached `COMPLETED`, `CANCELLED`, or `EXPIRED`. |
+
+## 6. `pc-handoff.lock`
 
 The single-instance lock file (ADR-004). Byte 0 is locked by the running instance and never
 written. From offset 1 it holds one diagnostic line about the holder:

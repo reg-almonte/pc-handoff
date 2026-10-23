@@ -25,3 +25,18 @@ This ledger records architectural decisions, assumptions, and trade-offs for **P
 - **Consequences**:
   - Uncluttered root directory.
   - Clear traceability for both human engineers and AI agents.
+
+---
+
+## [2026-10-23] DEC-010: Reservation Queue, Ownership Handoff & Status Messaging Architecture (REQ-002)
+- **Context**: `REQ-002` introduces interactive self-service mutations (joining/cancelling queue slots, initiating/claiming handoffs, posting broadcast status notes) from multi-threaded Streamlit UI sessions alongside the periodic background `Poller` thread.
+- **Decision**:
+  1. **Dedicated Atomic Snapshot Store (`reservations.json`)**: Store current reservation queue state, active handoff offer, and active status notes in `reservations.json` (`schemaVersion: 1`) using the same temp-file + atomic replace and `.corrupt-<timestamp>` backup pattern as `status.json` (ADR-005). Bound retained terminal reservations (`<= 20`) and active status notes (`<= 10`) so `reservations.json` stays compact ($< 16\text{ KB}$).
+  2. **Pure Domain State Machine**: Model `Reservation`, `HandoffSession` (`HandoffState`), `StatusNote`, and `QueueState` as frozen dataclasses in `src/pc_handoff/domain/reservations.py` with pure transition functions returning `(QueueState, tuple[ActivityEvent, ...])`.
+  3. **Thread-Safe `ReservationManager` & Synchronized Audit Appends**: Guard all `QueueState` transitions and `ReservationStore` writes with a `threading.RLock` in `ReservationManager`, and synchronize `ActivityLogStore` operations so both UI threads and the poller thread can safely persist events without race conditions. Readers of `StateStore.current()` remain lock-free via immutable `DashboardSnapshot` swaps (ADR-008).
+  4. **Unified Audit Log (`activity_log.json`)**: Extend `activity_log.json` (`schemaVersion: 1`) with six self-contained event types (`reservation_queued`, `reservation_cancelled`, `handoff_initiated`, `handoff_claimed`, `reservation_expired`, `status_note_posted`) while preserving the ADR-003 canonical one-event-per-line layout and `usagePeriodId` pairing rules for session events.
+  5. **Automatic RDP Session Correlation & Grace Timeouts**: Correlate active Windows sessions with `READY`/`QUEUED` reservations by case-insensitive `userName` on each poller tick and at startup reconciliation, automatically claiming `READY` reservations or expiring unclaimed offers after the grace period (`300 s` default).
+- **Consequences**:
+  - Zero external runtime dependencies; remains 100% offline-first.
+  - Immediate UI feedback on user actions without waiting for the next poll cycle.
+  - Full crash recovery and auditability across restarts.
