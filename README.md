@@ -24,8 +24,8 @@ python -m venv .venv
 .venv\Scripts\ruff check .
 .venv\Scripts\ruff format --check .
 
-# Run the application (the launcher is a stub until TASK-009)
-.venv\Scripts\python -m pc_handoff
+# Run the application (the dashboard is at http://<host>:<dashboardPort>/)
+.venv\Scripts\python -m pc_handoff --data-dir C:\pc-handoff\data
 ```
 
 On other platforms use `.venv/bin/` instead of `.venv\Scripts\` and
@@ -36,11 +36,26 @@ Notes:
 - Subset runs during development (for example `pytest tests/unit -k clock`) should add
   `--no-cov`, otherwise the coverage gate fails on partial coverage.
 - The performance benchmark runs separately with `pytest -m perf --no-cov`.
+- Tests marked `slow` use real time (the production 5 s poll interval, real subprocesses);
+  they run by default. `pytest -m "not slow and not perf" --no-cov` is a quicker
+  development run (without the coverage gate).
+
+## Documentation
+
+- [docs/operations.md](docs/operations.md) - requirements, install, run and stop, exit
+  codes, `config.json` settings, port and network, data directory, lock, `app.log`, test
+  hooks and the known limitations.
+- [docs/data-files.md](docs/data-files.md) - formats of `config.json`, `status.json` and
+  `activity_log.json` (fields, pairing rule, canonical layout, backups).
+- [docs/manual-acceptance.md](docs/manual-acceptance.md) - the checks to run by hand on the
+  shared PC (REQ AC-13, the AC-21 p95 timing, real RDP and console sessions, A3, A4).
 
 ## Layout
 
 - `src/pc_handoff/` - the application package (src layout)
-- `tests/` - pytest suite (`unit/`, later `integration/`, `ui/`, `acceptance/`, `windows/`, `perf/`)
+- `tests/` - pytest suite (`unit/`, `integration/`, `ui/`, `acceptance/` (one end-to-end test
+  per REQ-001 AC), `windows/`, `perf/`)
 - `tools/check_coverage.py` - separate line and branch coverage gates
+- `docs/` - operator and data-format documentation
 - `data/` - default runtime data directory (created at first run, not committed);
   application logs go to `data/logs/app.log` as JSON lines

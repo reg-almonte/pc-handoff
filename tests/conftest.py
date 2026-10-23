@@ -3,7 +3,10 @@
 import io
 import json
 import logging
+import signal
+import threading
 from collections.abc import Callable, Iterator
+from contextlib import contextmanager
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
@@ -60,3 +63,47 @@ def tracker(fakeClock: FakeClock):
     from pc_handoff.domain.tracker import SessionTracker
 
     return SessionTracker(fakeClock, logging.getLogger(f"{LOGGER_NAME}.domain.tracker"))
+
+
+def installWakeupFd(fd: int) -> int:
+    """Install ``fd`` as the signal wakeup fd; returns what is installed afterwards.
+
+    An fd the OS rejects (a socket already closed with its asyncio loop: WinError 6 or
+    10038, or ``ValueError``) is replaced by -1, "none". Such an fd can never deliver a
+    wakeup, so dropping it hides nothing; a live fd is kept exactly as found.
+    """
+    try:
+        signal.set_wakeup_fd(fd)
+        return fd
+    except (OSError, ValueError):
+        signal.set_wakeup_fd(-1)
+        return -1
+
+
+@contextmanager
+def wakeupFdGuard() -> Iterator[None]:
+    """Keep the wakeup fd as it was before the block, minus any dead fd (Critic TASK-011
+    BLOCKING-1, N5). Main thread only, as ``signal.set_wakeup_fd`` is."""
+    before = installWakeupFd(signal.set_wakeup_fd(-1))
+    try:
+        yield
+    finally:
+        installWakeupFd(before)
+
+
+@pytest.fixture(autouse=True)
+def restoreSignalWakeupFd() -> Iterator[None]:
+    """Undo the signal wakeup fd that an ``AppTest`` run's asyncio loop leaves behind.
+
+    On Windows that fd is a socket closed with its loop. A later test that raises a signal
+    on the main thread (``tests/integration/test_launcher.py``) would then get an
+    unraisable "not a socket" warning, and reinstalling it raises. Any earlier test (for
+    example ``tests/ui``) may have left it, so setup and teardown both tolerate it. It
+    lives in the root conftest so that every test order is protected (Critic TASK-011
+    N5), not only orders that pass through ``tests/acceptance``.
+    """
+    if threading.current_thread() is not threading.main_thread():
+        yield
+        return
+    with wakeupFdGuard():
+        yield

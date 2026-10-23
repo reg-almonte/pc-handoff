@@ -7,10 +7,12 @@ runtime uses a ``FakeClock`` for detection times unless a test needs real time (
 import json
 import logging
 import random
+import statistics
 import threading
 import time
 from collections.abc import Callable
 from datetime import timedelta
+from itertools import pairwise
 from pathlib import Path
 from typing import Any
 
@@ -391,14 +393,27 @@ class TestScheduleAndLifecycle:
             return original(traceId)
 
         runtime.pollOnce = timed  # type: ignore[method-assign]
+        # Robust under full-suite load (Critic TASK-011 S8: 0.3 s +- 0.12 s failed at 0.52 s).
+        # Offsets are taken from ``started``, read before the thread exists, so tick k
+        # (due at t0 + k * interval, t0 >= started) can never come before k * interval: that
+        # bound is exact. Lateness gets a generous allowance below the interval, so "first
+        # poll at once" still cannot be confused with "first poll after one interval".
+        # The rate itself (Critic TASK-011 N2): on a fixed-rate schedule one late poll makes
+        # one spacing longer and the next shorter by the same amount, so the median spacing
+        # stays at the interval under load, while a scheduler running 15% slow has every
+        # spacing at 1.15 s.
+        interval, lateness, polls = 1.0, 0.6, 5
         started = time.monotonic()
-        poller = startPoller(pollers, runtime, 0.3)
-        assert waitUntil(lambda: len(times) >= 4, 5)
+        poller = startPoller(pollers, runtime, interval)
+        assert waitUntil(lambda: len(times) >= polls, polls * interval + 5)
         poller.stop()
-        assert times[0] - started < 0.25
-        offsets = [t - times[0] for t in times[:4]]
+        offsets = [t - started for t in times[:polls]]
+        spacings = [later - earlier for earlier, later in pairwise(offsets)]
+        assert offsets[0] < lateness  # immediately, not after an interval
         for k, offset in enumerate(offsets):
-            assert offset == pytest.approx(0.3 * k, abs=0.12)
+            assert k * interval - 0.001 <= offset < k * interval + lateness, (k, offsets)
+        assert all(spacing < interval + lateness for spacing in spacings), spacings
+        assert statistics.median(spacings) < interval * 1.1, spacings
         assert poller.skippedCount == 0
 
     def test_a_slow_poll_skips_the_ticks_that_came_due(self, dataDir, pollers, capturedAppLog):
