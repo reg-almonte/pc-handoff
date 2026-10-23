@@ -50,7 +50,7 @@ graph TD
 
 ### Phase 0: System Design & Specification
 
-#### [ ] `TASK-011`: System Design Document & Architecture Decision Records
+#### [x] `TASK-011`: System Design Document & Architecture Decision Records
 - **Branch**: `feature/task011-reservation-spec`
 - **Labels**: `type:spec`, `area:architecture`
 - **Objectives**:
