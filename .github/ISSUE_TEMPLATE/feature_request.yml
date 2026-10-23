@@ -1,0 +1,31 @@
+name: Feature Request / Task
+description: Propose a new feature, capability, or implementation task.
+title: "[TASK]: "
+labels: ["type:feature"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thank you for proposing a task or feature. Please fill in the details below.
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem or Need
+      description: What user problem, need, or gap does this address?
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed Solution / Implementation Details
+      description: Describe how this feature should work or be implemented.
+    validations:
+      required: true
+  - type: textarea
+    id: acceptance_criteria
+    attributes:
+      label: Acceptance Criteria
+      description: Bullet points describing conditions for completion.
+      placeholder: "- [ ] AC 1: ..."
+    validations:
+      required: true

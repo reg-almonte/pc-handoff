@@ -1,0 +1,27 @@
+# Architectural Decisions Log
+
+This ledger records architectural decisions, assumptions, and trade-offs for **PC Handoff** in chronological order.
+
+---
+
+## [2026-10-21] DEC-001 through DEC-008: Core Architecture (REQ-001 MVP)
+- **ADR-001: Windows Terminal Services (WTS) API**: Session detection via WTSEnumerateSessionsW and WTSQuerySessionInformationW in `src/pc_handoff/detection/wts_provider.py`.
+- **ADR-002: In-Process Streamlit Server**: Single-process architecture (`python -m pc_handoff`) managing both background poller and Streamlit UI server.
+- **ADR-003: Paired Activity Logging**: Contiguous usage periods logged as pairs of `session_start` and `session_end` in `activity_log.json`.
+- **ADR-004: Byte-Range Instance Lock**: Single-instance OS byte-range locking via `pc-handoff.lock` to prevent split-brain writes.
+- **ADR-005: Atomic Local JSON Persistence**: Atomic temp-file and rename pattern (`.tmp` -> replace), with automatic `.corrupt-<timestamp>` backups.
+- **ADR-006: Editable and Source Installs**: Runtime data path resolution defaulting to `data/` within the install boundary.
+- **ADR-007: Timestamp Clamping**: Clamping end events to never precede start events during backward clock shifts.
+- **ADR-008: Isolated UI Rendering**: Immutable `DashboardSnapshot` behind non-blocking reference swap in `StateStore`.
+
+---
+
+## [2026-10-23] DEC-009: SDLC Artifacts & Governance Organization
+- **Context**: The project required clean separation between root files, human documentation, and AI-driven SDLC artifacts.
+- **Decision**:
+  - Adopt `.sdlc/` as the primary workspace for plans (`.sdlc/plans/`), gap analyses/logs (`.sdlc/logs/`), specifications (`.sdlc/specs/`), and decision logs (`.sdlc/docs/`).
+  - Adopt `GEMINI.md` at workspace root as the single source of truth for repository governance, GitHub issue standards, Git branching models, and CI quality gates.
+  - Keep `docs/` reserved for operator-facing manuals and data schemas.
+- **Consequences**:
+  - Uncluttered root directory.
+  - Clear traceability for both human engineers and AI agents.
