@@ -22,6 +22,7 @@ outage rule to what it finds (A7).
 
 import logging
 import sys
+from collections import deque
 from dataclasses import dataclass, field, replace
 
 from pc_handoff.app_logging import newTraceId, traceScope
@@ -40,7 +41,13 @@ from pc_handoff.persistence.startup_loader import (
     reconcileStartup,
 )
 from pc_handoff.persistence.status_store import StatusStore
-from pc_handoff.runtime.state_store import DashboardSnapshot, Notice, NoticeOrigin, StateStore
+from pc_handoff.runtime.state_store import (
+    MAX_NOTICES,
+    DashboardSnapshot,
+    Notice,
+    NoticeOrigin,
+    StateStore,
+)
 
 POLL_OK = "ok"
 POLL_ENUMERATION_FAILED = "enumeration_failed"
@@ -90,9 +97,16 @@ class AppRuntime:
         # from it) is shown or persisted; reconciliation replaces it (TASK-008 S6).
         self.trackerState: TrackerState = pendingDisplayState(startupContext)
         self.reconciliationDone = False
-        self.notices: list[Notice] = [
-            Notice.fromStoreNotice(n, NoticeOrigin.STARTUP) for n in startupContext.notices
-        ]
+        # Only the most recent notices are retained (TASK-010, Critic TASK-009 S7).
+        # Thread confinement: this deque is mutated (persistEvents) and iterated
+        # (publishState -> DashboardSnapshot.fromState) only on the poller thread, apart from
+        # here in __init__, before the runtime is registered and the poller starts. Readers
+        # (the Streamlit script threads) only ever see the snapshot's immutable tuple, so
+        # tuple(deque) can never race an append (Critic TASK-010 N5).
+        self.notices: deque[Notice] = deque(
+            (Notice.fromStoreNotice(n, NoticeOrigin.STARTUP) for n in startupContext.notices),
+            maxlen=MAX_NOTICES,
+        )
         self.publishState(self.trackerState)
 
     # --- the poll cycle -------------------------------------------------------------------

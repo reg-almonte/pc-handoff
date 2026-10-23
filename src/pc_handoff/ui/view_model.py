@@ -1,0 +1,299 @@
+"""Pure dashboard view model (ADR-008): a ``DashboardSnapshot`` plus ``now`` in, display text out.
+
+Everything the page shows is computed here as plain strings, so all text-level behaviour is
+unit-testable without Streamlit:
+
+- the badge (``Available`` / ``In Use`` / ``Unknown``) and its kind;
+- the Unknown banner, "Last known status: ..." and the frozen "Last known sessions" view
+  (REQ AC-11, AC-27): durations are ``lastSuccessfulPollAt - usagePeriodStart`` while the
+  status is Unknown, and ``now - usagePeriodStart`` otherwise;
+- ``HH:MM:SS`` durations with unbounded hours and the " (approx.)" suffix (REQ AC-10);
+- ``Unknown`` for missing client fields (REQ AC-9, AC-25), "unknown" for a null
+  ``disconnectedSince`` (TASK-005 F-note);
+- config warning lines (REQ AC-15) and notices (REQ AC-17, AC-18).
+
+All user- and OS-derived text passes through ``sanitize`` (Unicode control and format
+characters removed). The page renders it only through dataframe cells, ``st.text`` or, for
+markdown-rendering elements, ``escapeMarkdown`` (Security constraint).
+"""
+
+import string
+import unicodedata
+from collections.abc import Iterable
+from dataclasses import dataclass
+from datetime import datetime, timedelta, tzinfo
+
+from pc_handoff.domain.models import PcStatus, SessionState, TrackedSession
+from pc_handoff.persistence.paths import CONFIG_FILE_NAME
+from pc_handoff.runtime.state_store import DashboardSnapshot
+
+BADGE_SUCCESS = "success"
+BADGE_ERROR = "error"
+BADGE_NEUTRAL = "neutral"
+BADGE_KINDS = {
+    PcStatus.AVAILABLE: BADGE_SUCCESS,
+    PcStatus.IN_USE: BADGE_ERROR,
+}
+
+UNKNOWN_TEXT = "Unknown"
+UNKNOWN_DISCONNECTED_SINCE = "unknown"
+APPROX_SUFFIX = " (approx.)"
+UNAVAILABLE_BANNER = "Session information is currently unavailable"
+LAST_KNOWN_NONE = "Last known status: none"
+ACTIVE_HEADING = "Active sessions"
+LAST_KNOWN_HEADING = "Last known sessions"
+EMPTY_ACTIVE_MESSAGE = "No active user sessions"
+DISCONNECTED_HEADING = "Logged on but disconnected (not in use)"
+CONFIG_WARNING_PREFIX = f"Configuration ({CONFIG_FILE_NAME}): "
+# For a warning that already names the file (config_store's unreadable-file warning).
+CONFIG_FILE_WARNING_PREFIX = "Configuration: "
+TIME_FORMAT = "%Y-%m-%d %H:%M:%S"
+
+ACTIVE_COLUMNS = (
+    "User",
+    "Connection type",
+    "Client name",
+    "Client IP",
+    "Usage period start",
+    "Duration",
+)
+DISCONNECTED_COLUMNS = ("User", "Disconnected since")
+
+# Unicode "Other, control" (C0, DEL, C1) and "Other, format" (bidi overrides and isolates,
+# zero-width characters, BOM, soft hyphen): invisible, and able to reorder or hide text.
+REMOVED_CATEGORIES = frozenset({"Cc", "Cf"})
+MARKDOWN_SPECIALS = frozenset(string.punctuation)
+
+
+# --- formatting helpers -------------------------------------------------------------------
+
+
+def formatDuration(seconds: float) -> str:
+    """``HH:MM:SS``; hours are zero-padded to two digits and never capped (``27:03:09``).
+
+    Fractions are truncated and a negative value (wall clock moved back) shows as zero.
+    """
+    total = max(0, int(seconds))
+    hours, rest = divmod(total, 3600)
+    minutes, secs = divmod(rest, 60)
+    return f"{hours:02d}:{minutes:02d}:{secs:02d}"
+
+
+def localZone() -> tzinfo | None:
+    """The zone times are shown in; None means the host's local zone (``astimezone``).
+
+    A seam for tests, so the conversion is checked whatever the test host's zone is.
+    """
+    return None
+
+
+def formatTime(dt: datetime) -> str:
+    """Host-local ``YYYY-MM-DD HH:MM:SS`` (ADR-008 time display)."""
+    return dt.astimezone(localZone()).strftime(TIME_FORMAT)
+
+
+def utcOffsetLabel(offset: timedelta | None) -> str:
+    """``UTC+09:00`` style label for the page footer."""
+    if offset is None:
+        return "UTC"
+    sign = "-" if offset < timedelta(0) else "+"
+    minutes = abs(int(offset.total_seconds())) // 60
+    return f"UTC{sign}{minutes // 60:02d}:{minutes % 60:02d}"
+
+
+def sanitize(text: str) -> str:
+    """Remove control and format characters (Unicode categories Cc and Cf).
+
+    That covers ``\\x00``-``\\x1f``, ``\\x7f``, the C1 controls, bidi overrides and isolates
+    (U+202A-U+202E, U+2066-U+2069), zero-width characters and U+FEFF. A Remote Desktop
+    client chooses its own client name, so these could otherwise make it display as another
+    name or address (Critic TASK-010 N1). Letters of every script, accents, spaces and single
+    emoji are kept. Sequences that rely on Cf joiners or tags are not preserved: a ZWJ emoji
+    sequence shows as its separate members, a ZWNJ inside a Persian word is dropped, and
+    subdivision flags lose their tag characters. Only the display is affected, not stored data.
+    """
+    return "".join(char for char in text if unicodedata.category(char) not in REMOVED_CATEGORIES)
+
+
+def displayOrUnknown(value: str | None) -> str:
+    """The sanitized value, or ``Unknown`` when it is None, empty or blank (REQ AC-9)."""
+    if value is None:
+        return UNKNOWN_TEXT
+    cleaned = sanitize(value)
+    return cleaned if cleaned.strip() else UNKNOWN_TEXT
+
+
+def escapeMarkdown(text: str) -> str:
+    """Backslash-escape every ASCII punctuation character, so markdown shows ``text`` literally.
+
+    A superset of the ADR-008 list: it also covers ``$`` (LaTeX), ``:`` (emoji shortcodes
+    and colour directives) and ``&`` (HTML entities). CommonMark allows a backslash escape
+    of any ASCII punctuation character, so the rendered text is unchanged.
+    """
+    return "".join("\\" + char if char in MARKDOWN_SPECIALS else char for char in text)
+
+
+def configWarningLine(warning: str) -> str:
+    """One banner line per config warning: "<field>: <problem>; default <value> applied"."""
+    cleaned = sanitize(warning)
+    if cleaned.startswith(f"{CONFIG_FILE_NAME}:"):  # already names the file (Critic N3)
+        return CONFIG_FILE_WARNING_PREFIX + cleaned
+    return CONFIG_WARNING_PREFIX + cleaned
+
+
+# --- the view model -----------------------------------------------------------------------
+
+
+@dataclass(frozen=True)
+class ActiveRow:
+    user: str
+    connectionType: str
+    clientName: str
+    clientIp: str
+    periodStart: str
+    duration: str
+
+    def cells(self) -> tuple[str, ...]:
+        """The row in ``ACTIVE_COLUMNS`` order."""
+        return (
+            self.user,
+            self.connectionType,
+            self.clientName,
+            self.clientIp,
+            self.periodStart,
+            self.duration,
+        )
+
+
+@dataclass(frozen=True)
+class DisconnectedRow:
+    user: str
+    disconnectedSince: str
+
+    def cells(self) -> tuple[str, ...]:
+        """The row in ``DISCONNECTED_COLUMNS`` order."""
+        return (self.user, self.disconnectedSince)
+
+
+@dataclass(frozen=True)
+class NoticeItem:
+    noticeId: str
+    text: str
+
+
+@dataclass(frozen=True)
+class DashboardViewModel:
+    """Display strings for one render. Optional texts are None when not shown."""
+
+    badgeText: str
+    badgeKind: str
+    unavailableBanner: str | None
+    lastKnownLine: str | None
+    activeHeading: str
+    activeRows: tuple[ActiveRow, ...]
+    emptyActiveMessage: str | None
+    disconnectedHeading: str
+    disconnectedRows: tuple[DisconnectedRow, ...]
+    lastUpdated: str
+    dataUpdatedAt: str
+    lastUpdatedLine: str
+    configWarningLines: tuple[str, ...]
+    noticeItems: tuple[NoticeItem, ...]
+    footer: str
+
+
+def buildViewModel(snapshot: DashboardSnapshot, now: datetime) -> DashboardViewModel:
+    """Turn ``snapshot`` into display text as of ``now`` (pure; no I/O)."""
+    unknown = snapshot.status is PcStatus.UNKNOWN
+    pollAt = snapshot.lastSuccessfulPollAt
+    # While Unknown, durations are frozen at the last successful poll (REQ AC-11); without
+    # one there is nothing to freeze at.
+    durationsAt: datetime | None = pollAt if unknown else now
+
+    activeRows = tuple(
+        activeRow(s, durationsAt) for s in snapshot.sessions if s.state is SessionState.ACTIVE
+    )
+    disconnectedRows = tuple(
+        disconnectedRow(s) for s in snapshot.sessions if s.state is SessionState.DISCONNECTED
+    )
+    lastUpdated = formatTime(now)
+    dataUpdatedAt = formatTime(snapshot.updatedAt)
+    return DashboardViewModel(
+        badgeText=snapshot.status.value,
+        badgeKind=BADGE_KINDS.get(snapshot.status, BADGE_NEUTRAL),
+        unavailableBanner=UNAVAILABLE_BANNER if unknown else None,
+        lastKnownLine=lastKnownLine(snapshot) if unknown else None,
+        activeHeading=activeHeading(unknown, pollAt),
+        activeRows=activeRows,
+        emptyActiveMessage=None if activeRows else EMPTY_ACTIVE_MESSAGE,
+        disconnectedHeading=DISCONNECTED_HEADING,
+        disconnectedRows=disconnectedRows,
+        lastUpdated=lastUpdated,
+        dataUpdatedAt=dataUpdatedAt,
+        lastUpdatedLine=f"Last updated: {lastUpdated} (data as of {dataUpdatedAt})",
+        configWarningLines=tuple(configWarningLine(w) for w in snapshot.configWarnings),
+        noticeItems=tuple(NoticeItem(n.noticeId, sanitize(n.text)) for n in snapshot.notices),
+        footer=f"Times are shown in this PC's local time ({utcOffsetLabel(localOffset(now))}).",
+    )
+
+
+def localOffset(now: datetime) -> timedelta | None:
+    return now.astimezone(localZone()).utcoffset()
+
+
+def lastKnownLine(snapshot: DashboardSnapshot) -> str:
+    if snapshot.lastKnownStatus is None:
+        return LAST_KNOWN_NONE
+    at = (
+        UNKNOWN_TEXT
+        if snapshot.lastKnownStatusAt is None
+        else formatTime(snapshot.lastKnownStatusAt)
+    )
+    return f"Last known status: {snapshot.lastKnownStatus.value} at {at}"
+
+
+def activeHeading(unknown: bool, pollAt: datetime | None) -> str:
+    if not unknown:
+        return ACTIVE_HEADING
+    if pollAt is None:
+        return LAST_KNOWN_HEADING
+    return f"{LAST_KNOWN_HEADING} (as of {formatTime(pollAt)})"
+
+
+def activeRow(session: TrackedSession, durationsAt: datetime | None) -> ActiveRow:
+    period = session.openPeriod
+    if period is None:  # defensive: an Active session always has an open period
+        periodStart = duration = UNKNOWN_TEXT
+    else:
+        periodStart = formatTime(period.usagePeriodStart)
+        if durationsAt is None:
+            duration = UNKNOWN_TEXT
+        else:
+            elapsed = (durationsAt - period.usagePeriodStart).total_seconds()
+            duration = formatDuration(elapsed)
+            if period.durationApproximate:
+                duration += APPROX_SUFFIX
+    return ActiveRow(
+        user=displayOrUnknown(session.userName),
+        connectionType=displayOrUnknown(session.connectionType.value),
+        clientName=displayOrUnknown(session.clientName),
+        clientIp=displayOrUnknown(session.clientAddress),
+        periodStart=periodStart,
+        duration=duration,
+    )
+
+
+def disconnectedRow(session: TrackedSession) -> DisconnectedRow:
+    since = session.disconnectedSince
+    return DisconnectedRow(
+        user=displayOrUnknown(session.userName),
+        disconnectedSince=UNKNOWN_DISCONNECTED_SINCE if since is None else formatTime(since),
+    )
+
+
+def visibleNotices(
+    items: Iterable[NoticeItem], dismissed: Iterable[str] | None
+) -> tuple[NoticeItem, ...]:
+    """The notices this browser session has not dismissed (ADR-008)."""
+    hidden = set(dismissed or ())
+    return tuple(item for item in items if item.noticeId not in hidden)

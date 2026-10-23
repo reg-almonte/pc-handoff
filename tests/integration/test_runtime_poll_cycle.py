@@ -20,7 +20,9 @@ from pc_handoff.detection.provider import SessionEnumerationError
 from pc_handoff.domain.models import EventReason, PcStatus
 from pc_handoff.launcher import buildRuntime
 from pc_handoff.persistence import activity_log_store, status_store
+from pc_handoff.persistence.activity_log_store import AppendResult
 from pc_handoff.persistence.atomic import PersistenceError
+from pc_handoff.persistence.notices import StartupNotice
 from pc_handoff.persistence.schemas import validateActivityDocument, validateStatusDocument
 from pc_handoff.runtime import app_runtime
 from pc_handoff.runtime.app_runtime import (
@@ -28,8 +30,9 @@ from pc_handoff.runtime.app_runtime import (
     POLL_ERROR,
     POLL_OK,
     AppRuntime,
+    PollCycle,
 )
-from pc_handoff.runtime.state_store import NoticeOrigin
+from pc_handoff.runtime.state_store import MAX_NOTICES, NoticeOrigin
 from tests.conftest import FAKE_CLOCK_START
 from tests.fakes import FakeClock, FakeSessionProvider
 from tests.fakes.builders import osSession
@@ -532,6 +535,26 @@ class TestPersistenceFailures:
             assert any(w.startswith("dashboardPort:") for w in snapshot.configWarnings)
             assert snapshot.pollIntervalSeconds == 5
         assert pending.notices[0].noticeId == polled.notices[0].noticeId
+
+    def test_the_runtime_retains_only_the_most_recent_notices(self, dataDir, clock, monkeypatch):
+        # TASK-010 / Critic TASK-009 S7: a store that returns a notice on every append must
+        # not grow the runtime's memory or the page without bound.
+        runtime, provider = reconciledWithBob(dataDir, clock)
+        calls = iter(range(1000))
+
+        def appendWithNotice(batch):
+            i = next(calls)
+            notice = StartupNotice("activity_log.json", f"backup-{i}", f"notice {i}")
+            return AppendResult(written=True, notice=notice)
+
+        monkeypatch.setattr(runtime.activityStore, "appendBatch", appendWithNotice)
+        total = MAX_NOTICES + 7
+        for _ in range(total):
+            runtime.persistEvents(PollCycle(batch=[object()]))
+        assert len(runtime.notices) == MAX_NOTICES
+        runtime.publishState(runtime.trackerState)
+        texts = [n.text for n in runtime.stateStore.current().notices]
+        assert texts == [f"notice {i}" for i in range(total - MAX_NOTICES, total)]
 
 
 # --- AC-10: exceptions after the commit point never duplicate periods --------------------

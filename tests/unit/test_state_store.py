@@ -11,6 +11,7 @@ from pc_handoff.domain.models import PcStatus
 from pc_handoff.persistence.notices import StartupNotice
 from pc_handoff.runtime import registry
 from pc_handoff.runtime.state_store import (
+    MAX_NOTICES,
     DashboardSnapshot,
     Notice,
     NoticeOrigin,
@@ -62,6 +63,25 @@ class TestDashboardSnapshot:
         snapshot = makeSnapshot(configWarnings=["w"], notices=[notice])
         assert snapshot.configWarnings == ("w",)
         assert snapshot.notices == (notice,)
+
+    def test_only_the_most_recent_notices_are_kept(self):
+        # TASK-010 / Critic TASK-009 S7: runtime notices only accumulate, so the snapshot
+        # keeps the newest MAX_NOTICES and the page cannot grow without bound.
+        notices = [
+            Notice.fromStoreNotice(StartupNotice("f", None, f"n{i}"), NoticeOrigin.RUNTIME)
+            for i in range(MAX_NOTICES + 5)
+        ]
+        snapshot = makeSnapshot(notices=notices)
+        assert MAX_NOTICES == 20
+        assert snapshot.notices == tuple(notices[-MAX_NOTICES:])
+        assert snapshot.notices[-1].text == f"n{MAX_NOTICES + 4}"
+
+    def test_a_short_notice_list_is_kept_whole(self):
+        notices = [
+            Notice.fromStoreNotice(StartupNotice("f", None, f"n{i}"), NoticeOrigin.STARTUP)
+            for i in range(MAX_NOTICES)
+        ]
+        assert makeSnapshot(notices=notices).notices == tuple(notices)
 
 
 class TestNotice:

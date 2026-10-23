@@ -19,7 +19,8 @@ def buildFlagOptions(port: int) -> dict[str, Any]:
     console URL banner: with a headless server on the wildcard address, that banner looks up
     the external IP with an HTTP request to checkip.amazonaws.com (requirement System
     Boundary: no external network service; Critic TASK-009 B2). The launcher logs the port
-    to ``app.log`` instead.
+    to ``app.log`` instead. ``client.toolbarMode = "viewer"`` hides the Deploy button and the
+    developer options from every LAN viewer (Critic TASK-010 N2a).
     """
     return {
         "server.port": port,
@@ -29,6 +30,7 @@ def buildFlagOptions(port: int) -> dict[str, Any]:
         "server.runOnSave": False,
         "browser.gatherUsageStats": False,
         "logger.hideWelcomeMessage": True,
+        "client.toolbarMode": "viewer",
     }
 
 

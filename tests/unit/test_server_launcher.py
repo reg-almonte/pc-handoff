@@ -23,6 +23,7 @@ EXPECTED_FLAGS = {
     "server.runOnSave": False,
     "browser.gatherUsageStats": False,
     "logger.hideWelcomeMessage": True,
+    "client.toolbarMode": "viewer",
 }
 
 
@@ -76,6 +77,13 @@ def test_the_installed_bootstrap_api_has_the_expected_shape():
     params = list(inspect.signature(bootstrap.run).parameters)
     assert params[:4] == ["main_script_path", "is_hello", "args", "flag_options"]
     assert list(inspect.signature(bootstrap.load_config_options).parameters) == ["flag_options"]
+
+
+def test_lan_viewers_get_the_viewer_toolbar(loadedFlags):
+    # Critic TASK-010 N2a: "viewer" hides the Deploy button and the developer options from
+    # every LAN viewer; the value must be one Streamlit accepts and applies.
+    bootstrap.load_config_options(flag_options=server_launcher.buildFlagOptions(18555))
+    assert streamlitConfig.get_option("client.toolbarMode") == "viewer"
 
 
 @pytest.mark.parametrize("key", list(EXPECTED_FLAGS))

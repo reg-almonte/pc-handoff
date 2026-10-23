@@ -17,6 +17,11 @@ from pc_handoff.domain.models import PcStatus, TrackedSession
 from pc_handoff.domain.tracker import TrackerState
 from pc_handoff.persistence.notices import StartupNotice
 
+# Notices retained by the runtime and shown on the page: the most recent ones only, so a
+# repeating runtime notice cannot grow memory or the page without bound (TASK-010, Critic
+# TASK-009 S7). Notices are rare (a damaged or missing data file), so 20 is ample.
+MAX_NOTICES = 20
+
 
 class NoticeOrigin(StrEnum):
     """Whether a notice was raised while loading the files or while running."""
@@ -69,7 +74,8 @@ class DashboardSnapshot:
         notices: Iterable[Notice],
         pollIntervalSeconds: int,
     ) -> "DashboardSnapshot":
-        """The snapshot of ``state``, sessions in sessionId order."""
+        """The snapshot of ``state``, sessions in sessionId order and only the most recent
+        ``MAX_NOTICES`` notices."""
         return cls(
             status=state.status,
             lastKnownStatus=state.lastKnownStatus,
@@ -79,7 +85,7 @@ class DashboardSnapshot:
             sessions=tuple(state.sessions[sid] for sid in sorted(state.sessions)),
             updatedAt=updatedAt,
             configWarnings=tuple(configWarnings),
-            notices=tuple(notices),
+            notices=tuple(notices)[-MAX_NOTICES:],
             pollIntervalSeconds=pollIntervalSeconds,
         )
 
