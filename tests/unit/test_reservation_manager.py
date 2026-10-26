@@ -11,6 +11,7 @@ import pytest
 from pc_handoff.domain.models import EventReason, PcStatus
 from pc_handoff.domain.reservations import (
     HandoffStatus,
+    NoteCategory,
     QueueState,
     ReservationEventType,
     ReservationStatus,
@@ -18,6 +19,7 @@ from pc_handoff.domain.reservations import (
     enqueueReservation,
 )
 from pc_handoff.domain.tracker import TrackerState
+from pc_handoff.notifications.notifier import HostNotification, formatEventNotification
 from pc_handoff.persistence import reservation_store
 from pc_handoff.persistence.activity_log_store import ActivityLogStore
 from pc_handoff.persistence.atomic import PersistenceError
@@ -52,6 +54,7 @@ def makeManager(
     isPcAvailable=None,
     onStateChanged=None,
     claimGraceSeconds: int = 300,
+    notifier=None,
 ) -> ReservationManager:
     logger = logging.getLogger("test.reservation_manager")
     resStore = ReservationStore(paths, clock, logger)
@@ -66,7 +69,25 @@ def makeManager(
         isPcAvailable=isPcAvailable,
         onStateChanged=onStateChanged,
         claimGraceSeconds=claimGraceSeconds,
+        notifier=notifier,
     )
+
+
+class RecordingNotifier:
+    def __init__(self) -> None:
+        self.notifications: list[HostNotification] = []
+
+    def notify(self, notification: HostNotification) -> None:
+        self.notifications.append(notification)
+
+    def notifyEvents(self, events, state=None) -> None:
+        for ev in events:
+            n = formatEventNotification(ev, state)
+            if n is not None:
+                self.notify(n)
+
+    def close(self) -> None:
+        pass
 
 
 class TestReservationManagerMutations:
@@ -104,6 +125,13 @@ class TestReservationManagerMutations:
         rBob = mgr.enqueueReservation("bob", 30, pcAvailable=False)
         assert rBob.status is ReservationStatus.QUEUED
 
+        # Update bob's queued reservation duration and notes
+        clock.advance(2)
+        updatedBob = mgr.updateReservation(rBob.reservationId, 90, notes="Updated duration")
+        assert updatedBob.requestedDurationMinutes == 90
+        assert updatedBob.notes == "Updated duration"
+        assert mgr.currentState().findById(rBob.reservationId) == updatedBob
+
         # Alice claims handoff -> ACTIVE
         clock.advance(5)
         claimedAlice = mgr.claimHandoff(rAlice.reservationId)
@@ -131,6 +159,7 @@ class TestReservationManagerMutations:
             ReservationEventType.RESERVATION_QUEUED.value,
             ReservationEventType.HANDOFF_INITIATED.value,
             ReservationEventType.RESERVATION_QUEUED.value,
+            ReservationEventType.RESERVATION_UPDATED.value,
             ReservationEventType.HANDOFF_CLAIMED.value,
             ReservationEventType.HANDOFF_INITIATED.value,
             ReservationEventType.RESERVATION_CANCELLED.value,
@@ -138,16 +167,26 @@ class TestReservationManagerMutations:
 
     def test_status_note_post_and_clear(self, paths: DataPaths, clock: FakeClock) -> None:
         changes: list[tuple[QueueState, StartupNotice | None]] = []
+        notifier = RecordingNotifier()
         mgr = makeManager(
             paths,
             clock,
             onStateChanged=lambda state, notice: changes.append((state, notice)),
+            notifier=notifier,
         )
         # Without isPcAvailable callback, _resolvePcAvailable falls back to False
         res = mgr.enqueueReservation("alice", 30)
         assert res.status is ReservationStatus.QUEUED
+        assert len(notifier.notifications) == 1
+        assert notifier.notifications[0].eventType is ReservationEventType.RESERVATION_QUEUED
 
-        note = mgr.postStatusNote("alice", "Stepping away for 15m", ttlMinutes=30)
+        note = mgr.postStatusNote(
+            "alice",
+            "Stepping away for 15m",
+            ttlMinutes=30,
+            category=NoteCategory.MAINTENANCE,
+        )
+        assert note.category is NoteCategory.MAINTENANCE
         assert mgr.currentState().statusNotes == (note,)
 
         clock.advance(5)

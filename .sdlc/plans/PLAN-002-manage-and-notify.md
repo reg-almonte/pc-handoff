@@ -102,7 +102,7 @@ graph TD
 
 ### Phase 3: Runtime Integration & Editing Service
 
-#### [ ] `TASK-020`: Runtime Integration, Reservation Editing & Notification Hooks
+#### [x] `TASK-020`: Runtime Integration, Reservation Editing & Notification Hooks
 - **Branch**: `feature/task020-runtime-integration`
 - **Labels**: `type:feature`, `area:runtime`
 - **Files**:

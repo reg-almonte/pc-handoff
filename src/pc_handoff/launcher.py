@@ -34,6 +34,7 @@ from typing import TYPE_CHECKING
 if TYPE_CHECKING:  # pragma: no cover - typing only
     from pc_handoff.clock import Clock
     from pc_handoff.detection.provider import SessionProvider
+    from pc_handoff.notifications.notifier import Notifier
     from pc_handoff.persistence.config_store import ConfigLoadResult
     from pc_handoff.persistence.instance_lock import InstanceLock
     from pc_handoff.runtime.app_runtime import AppRuntime
@@ -296,6 +297,7 @@ def buildRuntime(
     *,
     enumerationTimeoutSeconds: float | None = None,
     configResult: ConfigLoadResult | None = None,
+    notifier: Notifier | None = None,
 ) -> AppRuntime:
     """Load the data files once and assemble the runtime around ``provider``.
 
@@ -308,6 +310,7 @@ def buildRuntime(
     """
     from pc_handoff.detection.timed_source import ENUMERATION_TIMEOUT_SECONDS, TimedSessionSource
     from pc_handoff.domain.tracker import SessionTracker
+    from pc_handoff.notifications.windows_notifier import createNotifier
     from pc_handoff.persistence.paths import DataPaths
     from pc_handoff.persistence.startup_loader import loadStartup
     from pc_handoff.runtime.app_runtime import AppRuntime
@@ -324,6 +327,11 @@ def buildRuntime(
         if enumerationTimeoutSeconds is None
         else enumerationTimeoutSeconds
     )
+    effectiveNotifier = (
+        createNotifier(ctx.config, logging.getLogger(f"{LOGGER_NAME}.notifications"))
+        if notifier is None
+        else notifier
+    )
     return AppRuntime(
         config=ctx.config,
         configWarnings=ctx.configWarnings,
@@ -335,6 +343,7 @@ def buildRuntime(
         stateStore=StateStore(),
         clock=clock,
         logger=logging.getLogger(f"{LOGGER_NAME}.runtime"),
+        notifier=effectiveNotifier,
     )
 
 

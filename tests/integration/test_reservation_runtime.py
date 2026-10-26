@@ -10,10 +10,13 @@ from pc_handoff.domain.models import PcStatus
 from pc_handoff.domain.reservations import (
     CLAIM_GRACE_SECONDS,
     HandoffStatus,
+    NoteCategory,
     ReservationEventType,
     ReservationStatus,
 )
 from pc_handoff.launcher import buildRuntime
+from pc_handoff.notifications.notifier import HostNotification, formatEventNotification
+from pc_handoff.notifications.windows_notifier import WindowsNotifier
 from pc_handoff.runtime.app_runtime import POLL_OK, AppRuntime
 from pc_handoff.runtime.poller import Poller
 from pc_handoff.runtime.state_store import NoticeOrigin
@@ -92,6 +95,16 @@ class TestAppRuntimeReservationLifecycle:
         assert rBob.status is ReservationStatus.QUEUED
         assert rCarol.status is ReservationStatus.QUEUED
 
+        # Carol updates her queued reservation duration and notes
+        clock.advance(2)
+        rCarol = runtime.reservationManager.updateReservation(
+            rCarol.reservationId,
+            60,
+            notes="Extended test run",
+        )
+        assert rCarol.requestedDurationMinutes == 60
+        assert rCarol.notes == "Extended test run"
+
         # Alice logs off -> poll cycle sees PC Available and promotes Bob to READY
         clock.advance(5)
         provider.setSessions([])
@@ -136,6 +149,7 @@ class TestAppRuntimeReservationLifecycle:
             "session_start",
             ReservationEventType.RESERVATION_QUEUED.value,
             ReservationEventType.RESERVATION_QUEUED.value,
+            ReservationEventType.RESERVATION_UPDATED.value,
             "session_end",
             ReservationEventType.HANDOFF_INITIATED.value,
             ReservationEventType.RESERVATION_EXPIRED.value,
@@ -144,6 +158,69 @@ class TestAppRuntimeReservationLifecycle:
             ReservationEventType.HANDOFF_CLAIMED.value,
             "session_end",
         ]
+
+    def test_runtime_wires_notifier_for_ui_mutations_and_poller_ticks(
+        self, dataDir: Path, clock: FakeClock
+    ) -> None:
+        notified: list[HostNotification] = []
+
+        class SpyNotifier:
+            def notify(self, notification: HostNotification) -> None:
+                notified.append(notification)
+
+            def notifyEvents(self, events, state=None) -> None:
+                for ev in events:
+                    n = formatEventNotification(ev, state)
+                    if n is not None:
+                        self.notify(n)
+
+            def close(self) -> None:
+                pass
+
+        # Default buildRuntime creates a WindowsNotifier when notifications are enabled
+        defaultRuntime = buildRuntime(dataDir, FakeSessionProvider([]), clock)
+        assert isinstance(defaultRuntime.reservationManager.notifier, WindowsNotifier)
+        defaultRuntime.reservationManager.notifier.close()
+
+        # Custom notifier passed to buildRuntime receives queue join, handoff, and expire alerts
+        provider = FakeSessionProvider([osSession(1, "alice", connectTime=T0)])
+        runtime = buildRuntime(dataDir, provider, clock, notifier=SpyNotifier())
+        assert runtime.pollOnce("t-1") == POLL_OK
+
+        rBob = runtime.reservationManager.enqueueReservation("bob", 30)
+        rCarol = runtime.reservationManager.enqueueReservation("carol", 30)
+        runtime.reservationManager.postStatusNote(
+            "alice",
+            "Almost done",
+            category=NoteCategory.URGENT,
+        )
+        assert [n.eventType for n in notified] == [
+            ReservationEventType.RESERVATION_QUEUED,
+            ReservationEventType.RESERVATION_QUEUED,
+        ]
+
+        # Alice disconnects -> Bob promoted to READY on poll tick -> HANDOFF_INITIATED notified
+        clock.advance(10)
+        provider.setSessions([])
+        assert runtime.pollOnce("t-2") == POLL_OK
+        assert [n.eventType for n in notified] == [
+            ReservationEventType.RESERVATION_QUEUED,
+            ReservationEventType.RESERVATION_QUEUED,
+            ReservationEventType.HANDOFF_INITIATED,
+        ]
+        assert notified[-1].reservationId == rBob.reservationId
+
+        # Bob expires -> RESERVATION_EXPIRED andCarol's HANDOFF_INITIATED notified
+        clock.advance(CLAIM_GRACE_SECONDS + 1)
+        assert runtime.pollOnce("t-3") == POLL_OK
+        assert [n.eventType for n in notified] == [
+            ReservationEventType.RESERVATION_QUEUED,
+            ReservationEventType.RESERVATION_QUEUED,
+            ReservationEventType.HANDOFF_INITIATED,
+            ReservationEventType.RESERVATION_EXPIRED,
+            ReservationEventType.HANDOFF_INITIATED,
+        ]
+        assert notified[-1].reservationId == rCarol.reservationId
 
     def test_poller_thread_drives_reservation_tick_evaluation(
         self, dataDir: Path, clock: FakeClock

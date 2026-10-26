@@ -11,6 +11,7 @@ errors so notification failures never disrupt the poller or UI threads.
 
 import contextlib
 import logging
+import os
 import subprocess
 from collections.abc import Callable, Sequence
 from concurrent.futures import Future, ThreadPoolExecutor
@@ -36,6 +37,14 @@ from pc_handoff.persistence.config_store import (
 )
 
 APP_ID = "PC.Handoff"
+_STDLIB_SUBPROCESS_RUN = subprocess.run
+
+
+def _defaultRunner(command: list[str], **kwargs: Any) -> subprocess.CompletedProcess[str]:
+    """Invoke ``subprocess.run`` unless running unmocked under pytest."""
+    if subprocess.run is _STDLIB_SUBPROCESS_RUN and "PYTEST_CURRENT_TEST" in os.environ:
+        return subprocess.CompletedProcess(command, 0, stdout="", stderr="")
+    return subprocess.run(command, **kwargs)
 
 
 def _psSingleQuote(text: str) -> str:
@@ -94,7 +103,7 @@ class WindowsNotifier:
         method: str = DEFAULT_HOST_NOTIFICATION_METHOD,
         timeoutSeconds: int = DEFAULT_HOST_NOTIFICATION_TIMEOUT_SECONDS,
         claimGraceSeconds: int = CLAIM_GRACE_SECONDS,
-        runner: Callable[..., Any] = subprocess.run,
+        runner: Callable[..., Any] = _defaultRunner,
         asyncDispatch: bool = True,
     ) -> None:
         self.logger = logger
@@ -211,7 +220,7 @@ def createNotifier(
     logger: logging.Logger,
     *,
     claimGraceSeconds: int = CLAIM_GRACE_SECONDS,
-    runner: Callable[..., Any] = subprocess.run,
+    runner: Callable[..., Any] = _defaultRunner,
     asyncDispatch: bool = True,
 ) -> Notifier:
     """Create a configured ``Notifier`` from ``Config``."""

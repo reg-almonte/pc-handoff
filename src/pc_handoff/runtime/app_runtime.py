@@ -33,6 +33,7 @@ from pc_handoff.detection.timed_source import TimedSessionSource
 from pc_handoff.domain.models import PcStatus
 from pc_handoff.domain.reservations import QueueState
 from pc_handoff.domain.tracker import PollOutcome, SessionTracker, TrackerState
+from pc_handoff.notifications.notifier import Notifier
 from pc_handoff.persistence.activity_log_store import ActivityLogStore, AuditEvent
 from pc_handoff.persistence.atomic import PersistenceError
 from pc_handoff.persistence.config_store import Config
@@ -86,6 +87,8 @@ class AppRuntime:
         stateStore: StateStore,
         clock: Clock,
         logger: logging.Logger,
+        *,
+        notifier: Notifier | None = None,
     ) -> None:
         self.config = config
         self.configWarnings = tuple(configWarnings)
@@ -120,6 +123,7 @@ class AppRuntime:
             initialState=startupContext.queueState,
             isPcAvailable=self._isPcAvailable,
             onStateChanged=self._onReservationStateChanged,
+            notifier=notifier,
         )
         self.publishState(self.trackerState)
 
