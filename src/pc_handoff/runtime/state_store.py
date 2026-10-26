@@ -14,6 +14,7 @@ from datetime import datetime
 from enum import StrEnum
 
 from pc_handoff.domain.models import PcStatus, TrackedSession
+from pc_handoff.domain.reservations import QueueState, emptyQueueState
 from pc_handoff.domain.tracker import TrackerState
 from pc_handoff.persistence.notices import StartupNotice
 
@@ -63,6 +64,7 @@ class DashboardSnapshot:
     configWarnings: tuple[str, ...]
     notices: tuple[Notice, ...]
     pollIntervalSeconds: int
+    queueState: QueueState
 
     @classmethod
     def fromState(
@@ -73,6 +75,7 @@ class DashboardSnapshot:
         configWarnings: Iterable[str],
         notices: Iterable[Notice],
         pollIntervalSeconds: int,
+        queueState: QueueState | None = None,
     ) -> "DashboardSnapshot":
         """The snapshot of ``state``, sessions in sessionId order and only the most recent
         ``MAX_NOTICES`` notices."""
@@ -87,6 +90,7 @@ class DashboardSnapshot:
             configWarnings=tuple(configWarnings),
             notices=tuple(notices)[-MAX_NOTICES:],
             pollIntervalSeconds=pollIntervalSeconds,
+            queueState=emptyQueueState(updatedAt) if queueState is None else queueState,
         )
 
 

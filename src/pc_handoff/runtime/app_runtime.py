@@ -24,16 +24,19 @@ import logging
 import sys
 from collections import deque
 from dataclasses import dataclass, field, replace
+from datetime import datetime
 
 from pc_handoff.app_logging import newTraceId, traceScope
 from pc_handoff.clock import Clock
 from pc_handoff.detection.provider import SessionEnumerationError
 from pc_handoff.detection.timed_source import TimedSessionSource
-from pc_handoff.domain.models import ActivityEvent, PcStatus
+from pc_handoff.domain.models import PcStatus
+from pc_handoff.domain.reservations import QueueState
 from pc_handoff.domain.tracker import PollOutcome, SessionTracker, TrackerState
-from pc_handoff.persistence.activity_log_store import ActivityLogStore
+from pc_handoff.persistence.activity_log_store import ActivityLogStore, AuditEvent
 from pc_handoff.persistence.atomic import PersistenceError
 from pc_handoff.persistence.config_store import Config
+from pc_handoff.persistence.notices import StartupNotice
 from pc_handoff.persistence.paths import STATUS_FILE_NAME
 from pc_handoff.persistence.startup_loader import (
     StartupContext,
@@ -41,6 +44,7 @@ from pc_handoff.persistence.startup_loader import (
     reconcileStartup,
 )
 from pc_handoff.persistence.status_store import StatusStore
+from pc_handoff.runtime.reservation_manager import ReservationManager
 from pc_handoff.runtime.state_store import (
     MAX_NOTICES,
     DashboardSnapshot,
@@ -60,7 +64,7 @@ class PollCycle:
 
     committed: bool = False
     handedOver: bool = False
-    batch: list[ActivityEvent] = field(default_factory=list)
+    batch: list[AuditEvent] = field(default_factory=list)
 
 
 class AppRuntime:
@@ -107,6 +111,28 @@ class AppRuntime:
             (Notice.fromStoreNotice(n, NoticeOrigin.STARTUP) for n in startupContext.notices),
             maxlen=MAX_NOTICES,
         )
+        assert startupContext.reservationStore is not None
+        self.reservationManager = ReservationManager(
+            reservationStore=startupContext.reservationStore,
+            activityStore=activityStore,
+            clock=clock,
+            logger=logger,
+            initialState=startupContext.queueState,
+            isPcAvailable=self._isPcAvailable,
+            onStateChanged=self._onReservationStateChanged,
+        )
+        self.publishState(self.trackerState)
+
+    def _isPcAvailable(self) -> bool:
+        return self.trackerState.detectionHealthy and self.trackerState.status is PcStatus.AVAILABLE
+
+    def _onReservationStateChanged(
+        self,
+        queueState: QueueState,
+        notice: StartupNotice | None,
+    ) -> None:
+        if notice is not None:
+            self.notices.append(Notice.fromStoreNotice(notice, NoticeOrigin.RUNTIME))
         self.publishState(self.trackerState)
 
     # --- the poll cycle -------------------------------------------------------------------
@@ -144,20 +170,32 @@ class AppRuntime:
             result = reconcileStartup(self.startupContext, self.tracker, sessions, detectionTime)
         else:
             result = self.tracker.applySuccess(self.trackerState, sessions, detectionTime)
-        self.commit(cycle, result, reconciling)
+        self.commit(cycle, result, reconciling, detectionTime)
 
         self._beforeAppend()
         self.persistEvents(cycle)
         self.writeStatus(self.trackerState)
+        self.reservationManager.writeCommittedTick()
         self.publishState(self.trackerState)
         return POLL_OK if failure is None else POLL_ENUMERATION_FAILED
 
-    def commit(self, cycle: PollCycle, result: PollOutcome, reconciled: bool) -> None:
+    def commit(
+        self,
+        cycle: PollCycle,
+        result: PollOutcome,
+        reconciled: bool,
+        detectionTime: datetime,
+    ) -> None:
         """The commit point: plain assignments, no I/O."""
         self.trackerState = result.state
         if reconciled:
             self.reconciliationDone = True
-        cycle.batch = list(result.events)
+        reservationOutcome = self.reservationManager.commitTick(
+            self.trackerState,
+            detectionTime,
+            reconciling=reconciled,
+        )
+        cycle.batch = [*result.events, *reservationOutcome.events]
         cycle.committed = True
 
     def _beforeAppend(self) -> None:
@@ -172,7 +210,8 @@ class AppRuntime:
         # Every notice is passed through, whatever ``written`` says: a backup happened even if
         # the write after it failed. The store emits each notice once (Critic TASK-009 B1).
         if result.notice is not None:
-            self.notices.append(Notice.fromStoreNotice(result.notice, NoticeOrigin.RUNTIME))
+            with self.reservationManager.lock:
+                self.notices.append(Notice.fromStoreNotice(result.notice, NoticeOrigin.RUNTIME))
 
     def writeStatus(self, state: TrackerState) -> None:
         """Write ``status.json``; a ``PersistenceError`` is a failed write, not a crash."""
@@ -186,15 +225,17 @@ class AppRuntime:
             )
 
     def publishState(self, state: TrackerState) -> None:
-        self.stateStore.publish(
-            DashboardSnapshot.fromState(
-                state,
-                updatedAt=self.clock.now(),
-                configWarnings=self.configWarnings,
-                notices=self.notices,
-                pollIntervalSeconds=self.config.sessionPollIntervalSeconds,
+        with self.reservationManager.lock:
+            self.stateStore.publish(
+                DashboardSnapshot.fromState(
+                    state,
+                    updatedAt=self.clock.now(),
+                    configWarnings=self.configWarnings,
+                    notices=self.notices,
+                    pollIntervalSeconds=self.config.sessionPollIntervalSeconds,
+                    queueState=self.reservationManager.currentState(),
+                )
             )
-        )
 
     # --- failures -------------------------------------------------------------------------
 
