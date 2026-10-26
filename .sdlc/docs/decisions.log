@@ -40,3 +40,20 @@ This ledger records architectural decisions, assumptions, and trade-offs for **P
   - Zero external runtime dependencies; remains 100% offline-first.
   - Immediate UI feedback on user actions without waiting for the next poll cycle.
   - Full crash recovery and auditability across restarts.
+
+---
+
+## [2026-10-26] DEC-011: Multi-View Streamlit UI, Host Notifications & Advanced Self-Service (REQ-003)
+- **Context**: `v0.2.0` established reliable in-memory reservation coordination and on-disk atomic persistence. However, user feedback required separating passive monitoring from interactive queue management, notifying the host PC when remote users queue up, and streamlining handoff with wait estimates, editable queue slots, and `.rdp` shortcuts.
+- **Decision**:
+  1. **Two-View Session Router (`NavigationController`)**: Decouple the UI into `StatusView` (monitoring) and `ManageView` (tabbed self-service) within a single Streamlit process using `st.session_state["current_view"]`. Provide prominent navigation header buttons ("⚙️ Manage Queue & Notes" on the status page; "← Back to PC Status" on the manage page) so users can transition seamlessly without full-page server reconnects.
+  2. **Semantic Tabbed Management Interface**: Group user interactions into three focused tabs:
+     - "➕ Join Queue" with real-time wait estimation and queued slot editing.
+     - "🤝 Ready to Handoff" with active offer status, claim buttons, and an in-memory `.rdp` connection file download.
+     - "📝 Post Status Note" with structured category tags (`general`, `urgent`, `maintenance`, `long_running`).
+  3. **Offline Host PC Notification Subsystem**: Implement `WindowsNotifier` supporting native Windows Toast notifications (via PowerShell WinRT `[Windows.UI.Notifications.ToastNotificationManager]`) and Terminal Services message broadcast (`msg.exe *`). Dispatch asynchronously via a background executor so notifications never block the poller thread or UI requests.
+  4. **Reservation Editing (`reservation_updated`)**: Support modifying duration and notes for non-terminal `QUEUED` reservations without forfeiting position in line, auditing changes via a new `reservation_updated` event in `activity_log.json`.
+- **Consequences**:
+  - Uncluttered main status view ideal for passive dashboards and wallboards.
+  - Immediate alerts for users sitting at the physical host PC when a remote queue request arrives.
+  - Maintains zero external pip/cloud dependencies and offline-first compliance.
