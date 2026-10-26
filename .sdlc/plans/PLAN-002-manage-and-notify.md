@@ -84,7 +84,7 @@ graph TD
 
 ### Phase 2: Host Notification Subsystem
 
-#### [ ] `TASK-019`: Host Notification Subsystem (Windows Toast & Broadcast)
+#### [x] `TASK-019`: Host Notification Subsystem (Windows Toast & Broadcast)
 - **Branch**: `feature/task019-host-notifications`
 - **Labels**: `type:feature`, `area:runtime`
 - **Files**:
