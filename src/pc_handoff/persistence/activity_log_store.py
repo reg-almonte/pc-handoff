@@ -41,6 +41,7 @@ file is allowed: the start may be in a ``.corrupt-*`` backup (REQ AC-18).
 
 import json
 import logging
+import threading
 from collections.abc import Iterable
 from dataclasses import dataclass, field, replace
 from datetime import datetime
@@ -49,6 +50,7 @@ from typing import Any
 
 from pc_handoff.clock import Clock
 from pc_handoff.domain.models import ActivityEvent
+from pc_handoff.domain.reservations import ReservationAuditEvent
 from pc_handoff.persistence.atomic import (
     PersistenceError,
     atomicWriteBytes,
@@ -61,7 +63,9 @@ from pc_handoff.persistence.paths import ACTIVITY_LOG_FILE_NAME, DataPaths
 from pc_handoff.persistence.reporting import describeIssues
 from pc_handoff.persistence.schemas import (
     EVENT_TYPE_VALUES,
+    RESERVATION_EVENT_TYPE_VALUES,
     SESSION_START,
+    STATUS_NOTE_EVENT_TYPE,
     UnparseableError,
     checkActivityOuter,
     decodeJson,
@@ -69,6 +73,8 @@ from pc_handoff.persistence.schemas import (
     parseIsoOrNone,
     validateActivityDocument,
 )
+
+AuditEvent = ActivityEvent | ReservationAuditEvent
 
 SUFFIX = b"\n]}\n"
 EMPTY_SUFFIX = b"]}\n"
@@ -122,12 +128,28 @@ class PairEntry:
 NO_ENTRY = PairEntry(None, False, False)
 
 
+def eventTargetId(event: dict[str, Any]) -> str | None:
+    """Return the deduplication target ID of ``event`` (`usagePeriodId`, `reservationId`, or
+    `noteId`), or None if it is missing or not a string."""
+    eventType = event.get("eventType")
+    if eventType in EVENT_TYPE_VALUES:
+        val = event.get("usagePeriodId")
+    elif eventType in RESERVATION_EVENT_TYPE_VALUES:
+        val = event.get("reservationId")
+    elif eventType == STATUS_NOTE_EVENT_TYPE:
+        val = event.get("noteId")
+    else:
+        return None
+    return val if isinstance(val, str) else None
+
+
 def buildIndex(eventDicts: Iterable[Any]) -> tuple[dict[str, PairEntry], set[EventKey]]:
     """The pairing index and event keys of the file's events.
 
-    Every object with a string ``usagePeriodId`` and a known ``eventType`` counts, valid or
-    not, so on any file the guard is at least as strict as ``validateActivityDocument``
-    (which pairs only individually valid events; on a valid file the two coincide).
+    Every object with a string target ID (`usagePeriodId`, `reservationId`, or `noteId`) and a
+    known ``eventType`` counts, valid or not, so on any file the guard is at least as strict as
+    ``validateActivityDocument`` (which pairs only individually valid events; on a valid file
+    the two coincide).
     """
     index: dict[str, PairEntry] = {}
     keys: set[EventKey] = set()
@@ -136,21 +158,20 @@ def buildIndex(eventDicts: Iterable[Any]) -> tuple[dict[str, PairEntry], set[Eve
             continue
         eventId = event.get("eventId")
         eventType = event.get("eventType")
-        periodId = event.get("usagePeriodId")
-        if not isinstance(periodId, str) or not isinstance(eventType, str):
-            continue
-        if eventType not in EVENT_TYPE_VALUES:
+        targetId = eventTargetId(event)
+        if targetId is None or not isinstance(eventType, str):
             continue
         if isinstance(eventId, str):
-            keys.add((eventId, eventType, periodId))
-        entry = index.get(periodId, NO_ENTRY)
-        if eventType == SESSION_START:
-            if not entry.hasStart:  # the validator also keeps the first start
-                index[periodId] = replace(
-                    entry, hasStart=True, startTimestamp=parseIsoOrNone(event.get("timestamp"))
-                )
-        else:
-            index[periodId] = replace(entry, hasEnd=True)
+            keys.add((eventId, eventType, targetId))
+        if eventType in EVENT_TYPE_VALUES:
+            entry = index.get(targetId, NO_ENTRY)
+            if eventType == SESSION_START:
+                if not entry.hasStart:  # the validator also keeps the first start
+                    index[targetId] = replace(
+                        entry, hasStart=True, startTimestamp=parseIsoOrNone(event.get("timestamp"))
+                    )
+            else:
+                index[targetId] = replace(entry, hasEnd=True)
     return index, keys
 
 
@@ -158,7 +179,7 @@ def buildIndex(eventDicts: Iterable[Any]) -> tuple[dict[str, PairEntry], set[Eve
 class Screened:
     """The guard's outcome: accepted events in order, their dicts, and the index changes."""
 
-    accepted: list[ActivityEvent] = field(default_factory=list)
+    accepted: list[AuditEvent] = field(default_factory=list)
     dicts: list[dict[str, Any]] = field(default_factory=list)
     updates: dict[str, PairEntry] = field(default_factory=dict)
     keys: set[EventKey] = field(default_factory=set)
@@ -188,7 +209,7 @@ def pairingRefusal(
 
 
 def screenEvents(
-    events: list[ActivityEvent],
+    events: list[AuditEvent],
     pairIndex: dict[str, PairEntry],
     fileKeys: set[EventKey],
     logger: logging.Logger,
@@ -216,8 +237,9 @@ def screenEvents(
         if issues:
             refuse(event, f"invalid: {describeIssues(issues)}")
             continue
-        periodId = doc["usagePeriodId"]
-        key: EventKey = (doc["eventId"], doc["eventType"], periodId)
+        targetId = eventTargetId(doc)
+        assert targetId is not None  # guaranteed by eventIssuesFor
+        key: EventKey = (doc["eventId"], doc["eventType"], targetId)
         if key in fileKeys:
             logger.info(
                 "activity event already persisted; skipped: eventId %s, eventType %s, "
@@ -225,12 +247,13 @@ def screenEvents(
                 *key,
             )
             continue
-        entry = result.updates.get(periodId) or pairIndex.get(periodId, NO_ENTRY)
-        reason, updated = pairingRefusal(doc, entry, parseIsoOrNone(doc["timestamp"]))
-        if reason is not None:
-            refuse(event, reason)
-            continue
-        result.updates[periodId] = updated
+        if doc["eventType"] in EVENT_TYPE_VALUES:
+            entry = result.updates.get(targetId) or pairIndex.get(targetId, NO_ENTRY)
+            reason, updated = pairingRefusal(doc, entry, parseIsoOrNone(doc["timestamp"]))
+            if reason is not None:
+                refuse(event, reason)
+                continue
+            result.updates[targetId] = updated
         result.keys.add(key)
         result.accepted.append(event)
         result.dicts.append(doc)
@@ -310,7 +333,8 @@ class ActivityLogStore:
         self.paths = paths
         self.clock = clock
         self.logger = logger
-        self.pendingEvents: list[ActivityEvent] = []
+        self.lock = threading.RLock()
+        self.pendingEvents: list[AuditEvent] = []
         self.pairIndex: dict[str, PairEntry] = {}
         self.fileEventKeys: set[EventKey] = set()
         self.eventCount = 0
@@ -355,7 +379,11 @@ class ActivityLogStore:
             assert isinstance(doc, dict)  # validated
             try:
                 # Validated first (G3/G5): fromJson does not check types itself.
-                events = [ActivityEvent.fromJson(e) for e in doc["events"]]
+                for e in doc["events"]:
+                    if e["eventType"] in EVENT_TYPE_VALUES:
+                        events.append(ActivityEvent.fromJson(e))
+                    else:
+                        ReservationAuditEvent.fromJson(e)
             except ValueError as exc:
                 reason = f"events cannot be converted ({exc})"
         if reason is not None:
@@ -435,67 +463,72 @@ class ActivityLogStore:
 
     # --- runtime ----------------------------------------------------------------------------
 
-    def enqueuePending(self, events: Iterable[ActivityEvent]) -> None:
+    def enqueuePending(self, events: Iterable[AuditEvent]) -> None:
         """Queue events without writing; the next ``appendBatch`` writes them first.
 
         Only for a batch that never reached ``appendBatch`` (TASK-009, Critic MAJOR-3).
         """
-        self.pendingEvents.extend(events)
+        with self.lock:
+            self.pendingEvents.extend(events)
 
     def pendingCount(self) -> int:
-        return len(self.pendingEvents)
+        with self.lock:
+            return len(self.pendingEvents)
 
-    def appendBatch(self, events: Iterable[ActivityEvent]) -> AppendResult:
-        """Append one poll's events (after any still pending) in one atomic write.
+    def appendBatch(self, events: Iterable[AuditEvent]) -> AppendResult:
+        """Append one poll's or UI action's events (after any still pending) in one atomic write.
 
         On ``PersistenceError`` (or an unreadable file) the accepted events stay queued, in
         order, and ``written`` is False. Any other exception propagates with the queue intact;
         the next call then takes the slow path and skips what was already written.
         """
-        self.pendingEvents.extend(events)  # step 0: handed over at entry
-        working = list(self.pendingEvents)
-        try:
-            path = self.paths.activityLog
-            raw = readBytes(path)
-        except (OSError, ValueError) as exc:
-            self.logger.error(
-                "%s could not be read (%s); %d event(s) stay pending",
-                ACTIVITY_LOG_FILE_NAME,
-                exc,
-                len(working),
-            )
-            return AppendResult(False, None)
-
-        base = self.currentBase(path, raw)  # step 1
-        if base.blocked:
-            return AppendResult(False, base.notice)
-
-        screened = screenEvents(working, base.pairIndex, base.fileEventKeys, self.logger)
-        self.pendingEvents = list(screened.accepted)  # skipped and refused events leave
-
-        # Step 3: the new bytes and cache values, before any I/O.
-        newBytes = self.buildBytes(raw, base, screened.dicts)
-        newIndex = {**base.pairIndex, **screened.updates} if screened.updates else base.pairIndex
-        newKeys = base.fileEventKeys | screened.keys if screened.keys else base.fileEventKeys
-        newCount = base.eventCount + len(screened.dicts)
-
-        if newBytes != raw:  # step 4
+        with self.lock:
+            self.pendingEvents.extend(events)  # step 0: handed over at entry
+            working = list(self.pendingEvents)
             try:
-                if raw is None:
-                    path.parent.mkdir(parents=True, exist_ok=True)
-                atomicWriteBytes(path, newBytes)
-            except (OSError, PersistenceError) as exc:
+                path = self.paths.activityLog
+                raw = readBytes(path)
+            except (OSError, ValueError) as exc:
                 self.logger.error(
-                    "%s could not be written (%s); %d event(s) stay pending",
+                    "%s could not be read (%s); %d event(s) stay pending",
                     ACTIVITY_LOG_FILE_NAME,
                     exc,
-                    len(self.pendingEvents),
+                    len(working),
                 )
+                return AppendResult(False, None)
+
+            base = self.currentBase(path, raw)  # step 1
+            if base.blocked:
                 return AppendResult(False, base.notice)
-        self.commitCache(newIndex, newKeys, newCount, newBytes)
-        self.pendingEvents = []
-        notice = base.notice if base.notice is not None else base.noticeIfWritten
-        return AppendResult(True, notice)
+
+            screened = screenEvents(working, base.pairIndex, base.fileEventKeys, self.logger)
+            self.pendingEvents = list(screened.accepted)  # skipped and refused events leave
+
+            # Step 3: the new bytes and cache values, before any I/O.
+            newBytes = self.buildBytes(raw, base, screened.dicts)
+            newIndex = (
+                {**base.pairIndex, **screened.updates} if screened.updates else base.pairIndex
+            )
+            newKeys = base.fileEventKeys | screened.keys if screened.keys else base.fileEventKeys
+            newCount = base.eventCount + len(screened.dicts)
+
+            if newBytes != raw:  # step 4
+                try:
+                    if raw is None:
+                        path.parent.mkdir(parents=True, exist_ok=True)
+                    atomicWriteBytes(path, newBytes)
+                except (OSError, PersistenceError) as exc:
+                    self.logger.error(
+                        "%s could not be written (%s); %d event(s) stay pending",
+                        ACTIVITY_LOG_FILE_NAME,
+                        exc,
+                        len(self.pendingEvents),
+                    )
+                    return AppendResult(False, base.notice)
+            self.commitCache(newIndex, newKeys, newCount, newBytes)
+            self.pendingEvents = []
+            notice = base.notice if base.notice is not None else base.noticeIfWritten
+            return AppendResult(True, notice)
 
     def currentBase(self, path: Path, raw: bytes | None) -> LogBase:
         """Step 1: the runtime outer check.

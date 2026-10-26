@@ -10,6 +10,7 @@ from pathlib import Path, PurePosixPath, PureWindowsPath
 CONFIG_FILE_NAME = "config.json"
 STATUS_FILE_NAME = "status.json"
 ACTIVITY_LOG_FILE_NAME = "activity_log.json"
+RESERVATIONS_FILE_NAME = "reservations.json"
 LOCK_FILE_NAME = "pc-handoff.lock"
 LOGS_DIR_NAME = "logs"
 APP_LOG_FILE_NAME = "app.log"
@@ -46,6 +47,10 @@ class DataPaths:
     @property
     def activityLog(self) -> Path:
         return self.resolveInside(ACTIVITY_LOG_FILE_NAME)
+
+    @property
+    def reservations(self) -> Path:
+        return self.resolveInside(RESERVATIONS_FILE_NAME)
 
     @property
     def lock(self) -> Path:

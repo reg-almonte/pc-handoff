@@ -94,7 +94,7 @@ graph TD
 
 ### Phase 2: Persistence & Atomic Storage Layer
 
-#### [ ] `TASK-013`: ReservationStore, ActivityLog Integration & Startup Loader
+#### [x] `TASK-013`: ReservationStore, ActivityLog Integration & Startup Loader
 - **Branch**: `feature/task013-reservation-persistence`
 - **Labels**: `type:feature`, `area:persistence`
 - **Files**:
