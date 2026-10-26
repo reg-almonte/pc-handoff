@@ -281,6 +281,27 @@ section 6. Each "within 7 s" means `sessionPollIntervalSeconds` + 2 s with the d
   - The data files are unchanged.
 - **Record:** exit code ____
 
+## M14. Reservation queue, ownership handoff, and status notes (REQ-002)
+
+- **Validates:** REQ-002 self-service reservation queue, ownership handoff countdown and RDP
+  session correlation, and broadcast status notes (`SD001`, `DEC-010`).
+- **Steps:**
+  1. While alice is connected over RDP (`In Use`), open the dashboard on bob's LAN machine,
+     check **Manage reservations & status notes**, and join the queue as `bob` (duration `60`
+     min, notes `Integration test`).
+  2. Have alice post a status note (`Wrapping up in 5 minutes`) and then click **Ready to
+     Handoff** (`offeredByUserName`: `alice`).
+  3. Have bob connect over RDP (or click **Claim Now (bob)**) within the 5-minute grace window.
+  4. Inspect `<data>\reservations.json` and `<data>\activity_log.json`.
+- **Expected:**
+  - Step 1: bob appears in the **Reservation queue** table as `QUEUED`.
+  - Step 2: alice's note appears under **Status notes**, bob transitions to `READY` with a
+    5-minute countdown banner (`Handoff offered by alice to bob`), and `handoff_initiated` is
+    recorded in `activity_log.json`.
+  - Step 3: bob's reservation transitions to `ACTIVE` automatically upon RDP logon (or manual
+    claim), and `handoff_claimed` is recorded in `activity_log.json`.
+- **Record:** queue & handoff verified: yes / no
+
 ---
 
 ## Results
@@ -304,3 +325,4 @@ section 6. Each "within 7 s" means `sessionPollIntervalSeconds` + 2 s with the d
 | M11 `poll completed` review after a day | A10 | | | | |
 | M12 CSV export with a formula-like client name | N2b (L10) | | | | |
 | M13 Second instance across sessions | ADR-004 | | | | |
+| M14 Reservation queue, ownership handoff, and status notes | REQ-002 | | | | |

@@ -2,7 +2,7 @@
 
 - **Requirement**: `REQ-002: Reservation & Ownership Handoff`
 - **Target Release / Milestone**: `v0.2.0-reservations`
-- **Status**: Draft / Planned
+- **Status**: Completed
 - **Governance**: Follows [GEMINI.md](../../GEMINI.md) and [docs/project-overview.md](../../docs/project-overview.md)
 
 ---
@@ -157,7 +157,7 @@ graph TD
 
 ### Phase 5: End-to-End Acceptance, Quality & Milestone Release
 
-#### [ ] `TASK-016`: Acceptance Test Suite, Documentation Freeze & Release Verification
+#### [x] `TASK-016`: Acceptance Test Suite, Documentation Freeze & Release Verification
 - **Branch**: `feature/task016-reservation-acceptance`
 - **Labels**: `type:test`, `area:acceptance`
 - **Files**:
