@@ -33,6 +33,7 @@ CONNECTION_TYPE_VALUES = ("RDP", "Console")
 EVENT_TYPE_VALUES = ("session_start", "session_end")
 RESERVATION_EVENT_TYPE_VALUES = (
     "reservation_queued",
+    "reservation_updated",
     "reservation_cancelled",
     "handoff_initiated",
     "handoff_claimed",
@@ -49,6 +50,7 @@ END_CAUSE_VALUES = ("disconnect", "logoff", "reconnect_detected", "unknown")
 
 RESERVATION_STATUS_VALUES = ("QUEUED", "READY", "ACTIVE", "COMPLETED", "CANCELLED", "EXPIRED")
 HANDOFF_STATUS_VALUES = ("IDLE", "OFFERED", "CLAIMED", "TIMED_OUT")
+NOTE_CATEGORY_VALUES = ("general", "urgent", "maintenance", "long_running")
 
 SESSION_START = "session_start"
 SESSION_END = "session_end"
@@ -418,6 +420,7 @@ STATUS_NOTE_SPECS = (
     NOTE_MESSAGE,
     FieldSpec("postedAt", "isoDateTime"),
     FieldSpec("expiresAt", "isoDateTime"),
+    FieldSpec("category", "str", enumValues=NOTE_CATEGORY_VALUES),
 )
 
 
@@ -526,6 +529,7 @@ STATUS_NOTE_EVENT_SPECS = (
     BOUNDED_USER_NAME,
     NOTE_MESSAGE,
     FieldSpec("expiresAt", "isoDateTime"),
+    FieldSpec("category", "str", enumValues=NOTE_CATEGORY_VALUES),
     FieldSpec("reason", "str", enumValues=REASON_VALUES),
 )
 

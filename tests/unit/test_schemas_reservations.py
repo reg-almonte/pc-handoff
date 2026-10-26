@@ -11,6 +11,7 @@ from pc_handoff.domain.models import EventReason
 from pc_handoff.domain.reservations import (
     HandoffState,
     HandoffStatus,
+    NoteCategory,
     QueueState,
     Reservation,
     ReservationEventType,
@@ -182,6 +183,10 @@ def test_status_notes_uniqueness_and_bounds() -> None:
             lambda d: d["statusNotes"][0].update(noteId="not-a-uuid"),
             "$.statusNotes[0].noteId",
         ),
+        (
+            lambda d: d["statusNotes"][0].update(category="invalid"),
+            "$.statusNotes[0].category",
+        ),
     ],
 )
 def test_reservations_field_bounds_and_types(mutate, expectedPath: str) -> None:
@@ -197,6 +202,7 @@ def test_reservations_field_bounds_and_types(mutate, expectedPath: str) -> None:
     "eventType",
     [
         ReservationEventType.RESERVATION_QUEUED,
+        ReservationEventType.RESERVATION_UPDATED,
         ReservationEventType.RESERVATION_CANCELLED,
         ReservationEventType.HANDOFF_INITIATED,
         ReservationEventType.HANDOFF_CLAIMED,
@@ -225,13 +231,17 @@ def test_reservation_events_pass_activity_document_validation(
     assert validateActivityDocument(doc) == []
 
 
-def test_status_note_event_passes_activity_document_validation() -> None:
+@pytest.mark.parametrize("category", list(NoteCategory))
+def test_status_note_event_passes_activity_document_validation(
+    category: NoteCategory,
+) -> None:
     note = StatusNote(
         noteId=NOTE_ID_1,
         userName="alice",
         message="Finishing tests",
         postedAt=at(0),
         expiresAt=at(60),
+        category=category,
     )
     ev = newStatusNoteEvent(note, at(0))
     doc = {"schemaVersion": 1, "events": [ev.toJson()]}
