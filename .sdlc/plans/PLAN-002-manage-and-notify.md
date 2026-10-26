@@ -2,7 +2,7 @@
 
 - **Requirement**: `REQ-003: Dedicated Management UI, Host Notifications & Advanced Self-Service`
 - **Target Release / Milestone**: `v0.3.0-manage-and-notify`
-- **Status**: In Progress / Planned
+- **Status**: Completed (`v0.3.0-manage-and-notify`)
 - **Governance**: Follows [GEMINI.md](../../GEMINI.md) and [docs/project-overview.md](../../docs/project-overview.md)
 - **Supercedes / Extends**: [PLAN-001-reservation-and-handoff.md](PLAN-001-reservation-and-handoff.md)
 
@@ -121,7 +121,7 @@ graph TD
 
 ### Phase 4: Modular Multi-View UI & Navigation
 
-#### [ ] `TASK-021`: Modular Multi-View Streamlit UI & Tabbed Management Interface
+#### [x] `TASK-021`: Modular Multi-View Streamlit UI & Tabbed Management Interface
 - **Branch**: `feature/task021-modular-ui-tabs`
 - **Labels**: `type:feature`, `area:ui`
 - **Files**:
@@ -144,7 +144,7 @@ graph TD
 
 ### Phase 5: Acceptance Verification, Documentation Freeze & Release
 
-#### [ ] `TASK-022`: Acceptance Test Suite, Documentation Freeze & Milestone Release
+#### [x] `TASK-022`: Acceptance Test Suite, Documentation Freeze & Milestone Release
 - **Branch**: `feature/task022-release-v030`
 - **Labels**: `type:test`, `area:acceptance`
 - **Files**:

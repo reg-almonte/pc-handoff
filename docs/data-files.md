@@ -70,6 +70,9 @@ deleted at the next start.
 | `dashboardRefreshIntervalSeconds` | integer | 5-300 | 10 |
 | `sessionPollIntervalSeconds` | integer | 2-60 | 5 |
 | `dashboardPort` | integer | 1024-65535 | 8501 |
+| `enableHostNotifications` | boolean (optional) | `true` / `false` | `true` |
+| `hostNotificationMethod` | string (optional) | `"toast"`, `"msg"`, `"none"` | `"toast"` |
+| `hostNotificationTimeoutSeconds` | integer (optional) | 3-60 | 10 |
 
 - The file is read once at startup; changes need a restart. It is created with the defaults
   when it is missing.
@@ -209,14 +212,14 @@ The audit trail of **usage periods**.
 | `durationSeconds` | integer >= 0 | yes | `periodEnd - usagePeriodStart` in whole seconds. |
 | `endCause` | string | no | `disconnect`, `logoff`, `reconnect_detected`, or `unknown` (defensive; not produced in practice). |
 
-### Reservation, handoff and status note event fields (`REQ-002` / `DEC-010`)
+### Reservation, handoff and status note event fields (`REQ-002`, `REQ-003` / `DEC-010`, `DEC-011`)
 
-Reservation and handoff events (`reservation_queued`, `reservation_cancelled`, `handoff_initiated`, `handoff_claimed`, `reservation_expired`) carry:
+Reservation and handoff events (`reservation_queued`, `reservation_updated`, `reservation_cancelled`, `handoff_initiated`, `handoff_claimed`, `reservation_expired`) carry:
 
 | Key | Type | Null | Meaning |
 | :--- | :--- | :--- | :--- |
 | `eventId` | UUID | no | Unique per event. |
-| `eventType` | string | no | `reservation_queued`, `reservation_cancelled`, `handoff_initiated`, `handoff_claimed`, or `reservation_expired`. |
+| `eventType` | string | no | `reservation_queued`, `reservation_updated`, `reservation_cancelled`, `handoff_initiated`, `handoff_claimed`, or `reservation_expired`. |
 | `timestamp` | timestamp | no | When the event was recorded. |
 | `reservationId` | UUID | no | The reservation this event belongs to. |
 | `userName` | string | no | Not empty (`1..64` chars). |
@@ -237,6 +240,7 @@ Reservation and handoff events (`reservation_queued`, `reservation_cancelled`, `
 | `message` | string | no | Note text (`1..280` chars). |
 | `expiresAt` | timestamp | no | When the note expires. |
 | `reason` | string | no | Always `observed`. |
+| `category` | string (optional) | no | `"general"` (default), `"urgent"`, `"maintenance"`, or `"long_running"`. |
 
 **End times.**
 
