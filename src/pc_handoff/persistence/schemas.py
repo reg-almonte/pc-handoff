@@ -31,13 +31,35 @@ LAST_KNOWN_STATUS_VALUES = ("Available", "In Use")  # never "Unknown" (decisions
 SESSION_STATE_VALUES = ("Active", "Disconnected")
 CONNECTION_TYPE_VALUES = ("RDP", "Console")
 EVENT_TYPE_VALUES = ("session_start", "session_end")
+RESERVATION_EVENT_TYPE_VALUES = (
+    "reservation_queued",
+    "reservation_cancelled",
+    "handoff_initiated",
+    "handoff_claimed",
+    "reservation_expired",
+)
+STATUS_NOTE_EVENT_TYPE = "status_note_posted"
+ALL_EVENT_TYPE_VALUES = (
+    *EVENT_TYPE_VALUES,
+    *RESERVATION_EVENT_TYPE_VALUES,
+    STATUS_NOTE_EVENT_TYPE,
+)
 REASON_VALUES = ("observed", "detected_after_outage", "detected_at_startup")
 END_CAUSE_VALUES = ("disconnect", "logoff", "reconnect_detected", "unknown")
+
+RESERVATION_STATUS_VALUES = ("QUEUED", "READY", "ACTIVE", "COMPLETED", "CANCELLED", "EXPIRED")
+HANDOFF_STATUS_VALUES = ("IDLE", "OFFERED", "CLAIMED", "TIMED_OUT")
 
 SESSION_START = "session_start"
 SESSION_END = "session_end"
 ACTIVE = "Active"
 DISCONNECTED = "Disconnected"
+
+MIN_DURATION_MINUTES = 5
+MAX_DURATION_MINUTES = 480
+MAX_USER_NAME_LENGTH = 64
+MAX_NOTES_LENGTH = 280
+MAX_MESSAGE_LENGTH = 280
 
 UUID_PATTERN = re.compile(r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}")
 
@@ -95,6 +117,35 @@ def isNonNegativeInt(value: Any) -> str | None:
 
 def isNonEmpty(value: Any) -> str | None:
     return None if value else "must not be empty"
+
+
+def isDurationMinutes(value: Any) -> str | None:
+    return (
+        None
+        if MIN_DURATION_MINUTES <= value <= MAX_DURATION_MINUTES
+        else f"must be between {MIN_DURATION_MINUTES} and {MAX_DURATION_MINUTES}"
+    )
+
+
+def isBoundedNonEmptyStr(maxLength: int) -> Callable[[Any], str | None]:
+    def check(value: str) -> str | None:
+        cleaned = value.strip()
+        if not cleaned:
+            return "must not be empty"
+        if len(cleaned) > maxLength:
+            return f"must be at most {maxLength} characters"
+        return None
+
+    return check
+
+
+def isBoundedNullableStr(maxLength: int) -> Callable[[Any], str | None]:
+    def check(value: str) -> str | None:
+        if len(value.strip()) > maxLength:
+            return f"must be at most {maxLength} characters"
+        return None
+
+    return check
 
 
 KIND_CHECKS: dict[str, tuple[Callable[[Any], bool], str]] = {
@@ -241,22 +292,191 @@ def validateStatusDocument(doc: Any) -> list[ValidationIssue]:
     return issues
 
 
-def statusSessionIssues(entry: Any, path: str) -> list[ValidationIssue]:
-    issues = validateObject(entry, STATUS_SESSION_SPECS, path)
-    if not isinstance(entry, dict):
-        return issues
-    state = entry.get("state")
-    rules = STATE_RULES.get(state) if isinstance(state, str) else None
+def applyConditionalNulls(
+    entry: dict[str, Any],
+    stateKey: str,
+    rulesByState: dict[str, dict[str, bool]],
+    path: str,
+) -> list[ValidationIssue]:
+    state = entry.get(stateKey)
+    rules = rulesByState.get(state) if isinstance(state, str) else None
     if rules is None:  # missing or invalid state: already reported above
-        return issues
+        return []
+    issues: list[ValidationIssue] = []
     for key, mustBeNull in rules.items():
         if key not in entry:  # already reported as missing
             continue
         isNull = entry[key] is None
         if mustBeNull and not isNull:
-            issues.append(ValidationIssue(f"{path}.{key}", f"must be null when {entry['state']}"))
+            issues.append(ValidationIssue(f"{path}.{key}", f"must be null when {state}"))
         elif not mustBeNull and isNull:
-            issues.append(ValidationIssue(f"{path}.{key}", f"required when {entry['state']}"))
+            issues.append(ValidationIssue(f"{path}.{key}", f"required when {state}"))
+    return issues
+
+
+def statusSessionIssues(entry: Any, path: str) -> list[ValidationIssue]:
+    issues = validateObject(entry, STATUS_SESSION_SPECS, path)
+    if isinstance(entry, dict):
+        issues.extend(applyConditionalNulls(entry, "state", STATE_RULES, path))
+    return issues
+
+
+# --- reservations.json ---------------------------------------------------------------------
+
+BOUNDED_USER_NAME = FieldSpec("userName", "str", check=isBoundedNonEmptyStr(MAX_USER_NAME_LENGTH))
+REQUESTED_DURATION_MINUTES = FieldSpec("requestedDurationMinutes", "int", check=isDurationMinutes)
+OFFERED_BY_USER_NAME = FieldSpec(
+    "offeredByUserName", "str", nullable=True, check=isBoundedNonEmptyStr(MAX_USER_NAME_LENGTH)
+)
+RESERVATION_NOTES = FieldSpec(
+    "notes", "str", nullable=True, check=isBoundedNullableStr(MAX_NOTES_LENGTH)
+)
+NOTE_MESSAGE = FieldSpec("message", "str", check=isBoundedNonEmptyStr(MAX_MESSAGE_LENGTH))
+
+RESERVATIONS_DOC_SPECS = (
+    FieldSpec("updatedAt", "isoDateTime"),
+    FieldSpec("handoff", "dict"),
+    FieldSpec("reservations", "list"),
+    FieldSpec("statusNotes", "list"),
+)
+
+HANDOFF_SPECS = (
+    FieldSpec("status", "str", enumValues=HANDOFF_STATUS_VALUES),
+    FieldSpec("reservationId", "uuid", nullable=True),
+    OFFERED_BY_USER_NAME,
+    FieldSpec(
+        "targetUserName", "str", nullable=True, check=isBoundedNonEmptyStr(MAX_USER_NAME_LENGTH)
+    ),
+    FieldSpec("offeredAt", "isoDateTime", nullable=True),
+    FieldSpec("expiresAt", "isoDateTime", nullable=True),
+)
+
+HANDOFF_ACTIVE_NULL_RULES: dict[str, bool] = {
+    "reservationId": False,
+    "targetUserName": False,
+    "offeredAt": False,
+    "expiresAt": False,
+}
+
+HANDOFF_STATE_RULES: dict[str, dict[str, bool]] = {
+    "IDLE": {
+        "reservationId": True,
+        "offeredByUserName": True,
+        "targetUserName": True,
+        "offeredAt": True,
+        "expiresAt": True,
+    },
+    "OFFERED": HANDOFF_ACTIVE_NULL_RULES,
+    "CLAIMED": HANDOFF_ACTIVE_NULL_RULES,
+    "TIMED_OUT": HANDOFF_ACTIVE_NULL_RULES,
+}
+
+RESERVATION_SPECS = (
+    FieldSpec("reservationId", "uuid"),
+    BOUNDED_USER_NAME,
+    REQUESTED_DURATION_MINUTES,
+    FieldSpec("queuedAt", "isoDateTime"),
+    FieldSpec("status", "str", enumValues=RESERVATION_STATUS_VALUES),
+    RESERVATION_NOTES,
+    FieldSpec("readyAt", "isoDateTime", nullable=True),
+    FieldSpec("claimExpiresAt", "isoDateTime", nullable=True),
+    FieldSpec("activatedAt", "isoDateTime", nullable=True),
+    FieldSpec("endedAt", "isoDateTime", nullable=True),
+)
+
+TERMINAL_RESERVATION_NULL_RULES: dict[str, bool] = {
+    "claimExpiresAt": True,
+    "endedAt": False,
+}
+
+RESERVATION_STATE_RULES: dict[str, dict[str, bool]] = {
+    "QUEUED": {
+        "readyAt": True,
+        "claimExpiresAt": True,
+        "activatedAt": True,
+        "endedAt": True,
+    },
+    "READY": {
+        "readyAt": False,
+        "claimExpiresAt": False,
+        "activatedAt": True,
+        "endedAt": True,
+    },
+    "ACTIVE": {
+        "claimExpiresAt": True,
+        "activatedAt": False,
+        "endedAt": True,
+    },
+    "COMPLETED": TERMINAL_RESERVATION_NULL_RULES,
+    "CANCELLED": TERMINAL_RESERVATION_NULL_RULES,
+    "EXPIRED": TERMINAL_RESERVATION_NULL_RULES,
+}
+
+STATUS_NOTE_SPECS = (
+    FieldSpec("noteId", "uuid"),
+    BOUNDED_USER_NAME,
+    NOTE_MESSAGE,
+    FieldSpec("postedAt", "isoDateTime"),
+    FieldSpec("expiresAt", "isoDateTime"),
+)
+
+
+def validateReservationsDocument(doc: Any) -> list[ValidationIssue]:
+    """Fully validate a parsed ``reservations.json`` (SD001 section 5, DEC-010)."""
+    if not isinstance(doc, dict):
+        return [ValidationIssue("$", "expected object")]
+    issues = schemaVersionIssues(doc) + validateObject(doc, RESERVATIONS_DOC_SPECS, "$")
+
+    handoff = doc.get("handoff")
+    if isinstance(handoff, dict):
+        issues.extend(validateObject(handoff, HANDOFF_SPECS, "$.handoff"))
+        issues.extend(applyConditionalNulls(handoff, "status", HANDOFF_STATE_RULES, "$.handoff"))
+
+    reservations = doc.get("reservations")
+    if isinstance(reservations, list):
+        seenResIds: set[str] = set()
+        readyCount = 0
+        activeCount = 0
+        for index, entry in enumerate(reservations):
+            path = f"$.reservations[{index}]"
+            entryIssues = validateObject(entry, RESERVATION_SPECS, path)
+            issues.extend(entryIssues)
+            if isinstance(entry, dict):
+                issues.extend(applyConditionalNulls(entry, "status", RESERVATION_STATE_RULES, path))
+                resId = entry.get("reservationId")
+                if isUuid(resId):
+                    if resId in seenResIds:
+                        issues.append(
+                            ValidationIssue(f"{path}.reservationId", "duplicate reservationId")
+                        )
+                    seenResIds.add(resId)
+                status = entry.get("status")
+                if status == "READY":
+                    readyCount += 1
+                    if readyCount > 1:
+                        issues.append(
+                            ValidationIssue(f"{path}.status", "at most one READY reservation")
+                        )
+                elif status == "ACTIVE":
+                    activeCount += 1
+                    if activeCount > 1:
+                        issues.append(
+                            ValidationIssue(f"{path}.status", "at most one ACTIVE reservation")
+                        )
+
+    statusNotes = doc.get("statusNotes")
+    if isinstance(statusNotes, list):
+        seenNoteIds: set[str] = set()
+        for index, note in enumerate(statusNotes):
+            path = f"$.statusNotes[{index}]"
+            issues.extend(validateObject(note, STATUS_NOTE_SPECS, path))
+            if isinstance(note, dict):
+                noteId = note.get("noteId")
+                if isUuid(noteId):
+                    if noteId in seenNoteIds:
+                        issues.append(ValidationIssue(f"{path}.noteId", "duplicate noteId"))
+                    seenNoteIds.add(noteId)
+
     return issues
 
 
@@ -264,7 +484,7 @@ def statusSessionIssues(entry: Any, path: str) -> list[ValidationIssue]:
 
 EVENT_SPECS = (
     FieldSpec("eventId", "uuid"),
-    FieldSpec("eventType", "str", enumValues=EVENT_TYPE_VALUES),
+    FieldSpec("eventType", "str", enumValues=ALL_EVENT_TYPE_VALUES),
     FieldSpec("usagePeriodId", "uuid"),
     FieldSpec("timestamp", "isoDateTime"),
     SESSION_ID,
@@ -284,6 +504,29 @@ END_EVENT_SPECS = (
     FieldSpec("periodEnd", "isoDateTime", nullable=True),
     FieldSpec("durationSeconds", "int", nullable=True, check=isNonNegativeInt),
     FieldSpec("endCause", "str", enumValues=END_CAUSE_VALUES),
+)
+
+RESERVATION_EVENT_SPECS = (
+    FieldSpec("eventId", "uuid"),
+    FieldSpec("eventType", "str", enumValues=RESERVATION_EVENT_TYPE_VALUES),
+    FieldSpec("timestamp", "isoDateTime"),
+    FieldSpec("reservationId", "uuid"),
+    BOUNDED_USER_NAME,
+    REQUESTED_DURATION_MINUTES,
+    FieldSpec("reason", "str", enumValues=REASON_VALUES),
+    OFFERED_BY_USER_NAME,
+    RESERVATION_NOTES,
+)
+
+STATUS_NOTE_EVENT_SPECS = (
+    FieldSpec("eventId", "uuid"),
+    FieldSpec("eventType", "str", enumValues=(STATUS_NOTE_EVENT_TYPE,)),
+    FieldSpec("timestamp", "isoDateTime"),
+    FieldSpec("noteId", "uuid"),
+    BOUNDED_USER_NAME,
+    NOTE_MESSAGE,
+    FieldSpec("expiresAt", "isoDateTime"),
+    FieldSpec("reason", "str", enumValues=REASON_VALUES),
 )
 
 
@@ -324,6 +567,12 @@ def validateActivityDocument(doc: Any) -> list[ValidationIssue]:
 
 
 def eventIssuesFor(event: Any, path: str) -> list[ValidationIssue]:
+    if isinstance(event, dict):
+        eventType = event.get("eventType")
+        if eventType in RESERVATION_EVENT_TYPE_VALUES:
+            return validateObject(event, RESERVATION_EVENT_SPECS, path)
+        if eventType == STATUS_NOTE_EVENT_TYPE:
+            return validateObject(event, STATUS_NOTE_EVENT_SPECS, path)
     issues = validateObject(event, EVENT_SPECS, path)
     if isinstance(event, dict) and event.get("eventType") == SESSION_END:
         issues.extend(validateObject(event, END_EVENT_SPECS, path))
@@ -331,11 +580,13 @@ def eventIssuesFor(event: Any, path: str) -> list[ValidationIssue]:
 
 
 def pairingIssues(events: list[tuple[int, dict[str, Any]]]) -> list[ValidationIssue]:
-    """ADR-005 in-file pairing rule over events that passed their own checks."""
+    """ADR-005 in-file pairing rule over session events that passed their own checks."""
     issues: list[ValidationIssue] = []
     starts: dict[str, datetime] = {}
     ends: dict[str, tuple[int, datetime]] = {}
     for index, event in events:
+        if event["eventType"] not in EVENT_TYPE_VALUES:
+            continue
         periodId = event["usagePeriodId"]
         timestamp = parseIsoOrNone(event["timestamp"])
         assert timestamp is not None  # guaranteed by EVENT_SPECS
