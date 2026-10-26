@@ -134,7 +134,7 @@ graph TD
 
 ### Phase 4: Streamlit UI & Self-Service Interaction
 
-#### [ ] `TASK-015`: Self-Service Reservation Dashboard & Messaging UI
+#### [x] `TASK-015`: Self-Service Reservation Dashboard & Messaging UI
 - **Branch**: `feature/task015-streamlit-reservation-ui`
 - **Labels**: `type:feature`, `area:ui`
 - **Files**:
