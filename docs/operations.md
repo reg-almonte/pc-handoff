@@ -122,6 +122,9 @@ use them in production.
 | `dashboardRefreshIntervalSeconds` | integer | 5-300 | 10 | Restart required |
 | `sessionPollIntervalSeconds` | integer | 2-60 | 5 | Restart required |
 | `dashboardPort` | integer | 1024-65535 | 8501 | Restart required |
+| `enableHostNotifications` | boolean (optional) | `true` or `false` | `true` | Restart required |
+| `hostNotificationMethod` | string (optional) | `"toast"`, `"msg"`, `"none"` | `"toast"` | Restart required |
+| `hostNotificationTimeoutSeconds` | integer (optional) | 3-60 | 10 | Restart required |
 | `schemaVersion` | integer | must be 1 | 1 | - |
 
 **Read once at startup.** The file is read once, at startup. Editing it while the

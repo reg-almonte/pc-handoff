@@ -302,6 +302,27 @@ section 6. Each "within 7 s" means `sessionPollIntervalSeconds` + 2 s with the d
     claim), and `handoff_claimed` is recorded in `activity_log.json`.
 - **Record:** queue & handoff verified: yes / no
 
+## M15. Dedicated Manage View, slot editing, .rdp download, and host PC notifications (REQ-003)
+
+- **Validates:** REQ-003 header navigation (`⚙️ Manage Queue & Notes` / `← Back to PC Status`),
+  3-tab management interface (`➕ Join Queue`, `🤝 Ready to Handoff`, `📝 Post Status Note`),
+  queued reservation editing, `.rdp` file download, and Windows host notifications (`SD002`,
+  `DEC-011`).
+- **Steps:**
+  1. On the main Status View, click **⚙️ Manage Queue & Notes** in the top right.
+  2. In **➕ Join Queue**, verify the live wait-time estimate, join as `bob` (`30` min), then edit
+     `bob`'s queued duration to `60` min and click **Save Changes (bob)**.
+  3. In **🤝 Ready to Handoff**, click **Download .rdp Connection File** and verify `pc-handoff.rdp`
+     downloads with `full address:s:<host>:3389`.
+  4. In **📝 Post Status Note**, post a note with category `Maintenance` and verify `[Maintenance]`
+     is displayed.
+  5. Confirm that the shared host PC displays a Windows toast notification (or `msg.exe` modal when
+     `hostNotificationMethod` is `"msg"`) upon queue join and handoff offer.
+- **Expected:**
+  - All navigation transitions, slot edits (`reservation_updated` in `activity_log.json`), `.rdp`
+    file downloads, categorized notes, and host notifications succeed without errors.
+- **Record:** manage view & host notifications verified: yes / no
+
 ---
 
 ## Results
@@ -326,3 +347,4 @@ section 6. Each "within 7 s" means `sessionPollIntervalSeconds` + 2 s with the d
 | M12 CSV export with a formula-like client name | N2b (L10) | | | | |
 | M13 Second instance across sessions | ADR-004 | | | | |
 | M14 Reservation queue, ownership handoff, and status notes | REQ-002 | | | | |
+| M15 Dedicated Manage View, slot editing, .rdp download, and host PC notifications | REQ-003 | | | | |
