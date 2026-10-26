@@ -24,6 +24,14 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta, tzinfo
 
 from pc_handoff.domain.models import PcStatus, SessionState, TrackedSession
+from pc_handoff.domain.reservations import (
+    HandoffState,
+    HandoffStatus,
+    QueueState,
+    Reservation,
+    ReservationStatus,
+    StatusNote,
+)
 from pc_handoff.persistence.paths import CONFIG_FILE_NAME
 from pc_handoff.runtime.state_store import DashboardSnapshot
 
@@ -58,6 +66,18 @@ ACTIVE_COLUMNS = (
     "Duration",
 )
 DISCONNECTED_COLUMNS = ("User", "Disconnected since")
+RESERVATION_HEADING = "Reservation queue"
+EMPTY_QUEUE_MESSAGE = "No active or queued reservations"
+STATUS_NOTES_HEADING = "Status notes"
+RESERVATION_COLUMNS = (
+    "Position",
+    "User",
+    "Status",
+    "Requested duration",
+    "Queued at",
+    "Claim expires in",
+    "Notes",
+)
 
 # Unicode "Other, control" (C0, DEL, C1) and "Other, format" (bidi overrides and isolates,
 # zero-width characters, BOM, soft hyphen): invisible, and able to reorder or hide text.
@@ -182,6 +202,42 @@ class NoticeItem:
 
 
 @dataclass(frozen=True)
+class ReservationRow:
+    reservationId: str
+    position: str
+    user: str
+    status: str
+    requestedDuration: str
+    queuedAt: str
+    claimCountdown: str
+    notes: str
+    canClaim: bool
+    canCancel: bool
+
+    def cells(self) -> tuple[str, ...]:
+        """The row in ``RESERVATION_COLUMNS`` order."""
+        return (
+            self.position,
+            self.user,
+            self.status,
+            self.requestedDuration,
+            self.queuedAt,
+            self.claimCountdown,
+            self.notes,
+        )
+
+
+@dataclass(frozen=True)
+class StatusNoteItem:
+    noteId: str
+    user: str
+    message: str
+    postedAt: str
+    expiresAt: str
+    line: str
+
+
+@dataclass(frozen=True)
 class DashboardViewModel:
     """Display strings for one render. Optional texts are None when not shown."""
 
@@ -200,6 +256,12 @@ class DashboardViewModel:
     configWarningLines: tuple[str, ...]
     noticeItems: tuple[NoticeItem, ...]
     footer: str
+    reservationHeading: str = RESERVATION_HEADING
+    reservationRows: tuple[ReservationRow, ...] = ()
+    emptyQueueMessage: str | None = EMPTY_QUEUE_MESSAGE
+    handoffBanner: str | None = None
+    statusNotesHeading: str = STATUS_NOTES_HEADING
+    statusNoteItems: tuple[StatusNoteItem, ...] = ()
 
 
 def buildViewModel(snapshot: DashboardSnapshot, now: datetime) -> DashboardViewModel:
@@ -216,6 +278,8 @@ def buildViewModel(snapshot: DashboardSnapshot, now: datetime) -> DashboardViewM
     disconnectedRows = tuple(
         disconnectedRow(s) for s in snapshot.sessions if s.state is SessionState.DISCONNECTED
     )
+    resRows = reservationRows(snapshot.queueState, now)
+    noteItems = statusNoteItems(snapshot.queueState.statusNotes, now)
     lastUpdated = formatTime(now)
     dataUpdatedAt = formatTime(snapshot.updatedAt)
     return DashboardViewModel(
@@ -234,6 +298,12 @@ def buildViewModel(snapshot: DashboardSnapshot, now: datetime) -> DashboardViewM
         configWarningLines=tuple(configWarningLine(w) for w in snapshot.configWarnings),
         noticeItems=tuple(NoticeItem(n.noticeId, sanitize(n.text)) for n in snapshot.notices),
         footer=f"Times are shown in this PC's local time ({utcOffsetLabel(localOffset(now))}).",
+        reservationHeading=RESERVATION_HEADING,
+        reservationRows=resRows,
+        emptyQueueMessage=None if resRows else EMPTY_QUEUE_MESSAGE,
+        handoffBanner=handoffBannerLine(snapshot.queueState.handoff, now),
+        statusNotesHeading=STATUS_NOTES_HEADING,
+        statusNoteItems=noteItems,
     )
 
 
@@ -297,3 +367,91 @@ def visibleNotices(
     """The notices this browser session has not dismissed (ADR-008)."""
     hidden = set(dismissed or ())
     return tuple(item for item in items if item.noticeId not in hidden)
+
+
+def reservationRows(queueState: QueueState, now: datetime) -> tuple[ReservationRow, ...]:
+    """Build display rows for all non-terminal reservations in queue order."""
+    nonTerminal = queueState.nonTerminalReservations
+    headQueuedId = (
+        queueState.queuedReservations[0].reservationId
+        if (
+            queueState.activeReservation is None
+            and queueState.readyReservation is None
+            and queueState.queuedReservations
+        )
+        else None
+    )
+    rows: list[ReservationRow] = []
+    for index, res in enumerate(nonTerminal, start=1):
+        rows.append(reservationRow(res, index, now, headQueuedId=headQueuedId))
+    return tuple(rows)
+
+
+def reservationRow(
+    res: Reservation,
+    position: int,
+    now: datetime,
+    *,
+    headQueuedId: str | None,
+) -> ReservationRow:
+    if res.status is ReservationStatus.READY and res.claimExpiresAt is not None:
+        countdown = formatDuration((res.claimExpiresAt - now).total_seconds())
+    else:
+        countdown = "-"
+    canClaim = res.status is ReservationStatus.READY or res.reservationId == headQueuedId
+    return ReservationRow(
+        reservationId=res.reservationId,
+        position=str(position),
+        user=displayOrUnknown(res.userName),
+        status=res.status.value,
+        requestedDuration=f"{res.requestedDurationMinutes} min",
+        queuedAt=formatTime(res.queuedAt),
+        claimCountdown=countdown,
+        notes=sanitize(res.notes) if res.notes else "-",
+        canClaim=canClaim,
+        canCancel=True,
+    )
+
+
+def handoffBannerLine(handoff: HandoffState, now: datetime) -> str | None:
+    """Banner text for an active ``OFFERED`` or ``TIMED_OUT`` handoff, or ``None``."""
+    if handoff.status is HandoffStatus.OFFERED and handoff.targetUserName is not None:
+        target = displayOrUnknown(handoff.targetUserName)
+        countdown = (
+            formatDuration((handoff.expiresAt - now).total_seconds())
+            if handoff.expiresAt is not None
+            else UNKNOWN_TEXT
+        )
+        if handoff.offeredByUserName is not None:
+            offerer = displayOrUnknown(handoff.offeredByUserName)
+            return f"Handoff offered by {offerer} to {target} — claim within {countdown}"
+        return f"PC is ready for {target} — claim within {countdown}"
+    if handoff.status is HandoffStatus.TIMED_OUT and handoff.targetUserName is not None:
+        target = displayOrUnknown(handoff.targetUserName)
+        return f"Handoff to {target} timed out"
+    return None
+
+
+def statusNoteItems(
+    notes: Iterable[StatusNote],
+    now: datetime,
+) -> tuple[StatusNoteItem, ...]:
+    """Build display items for non-expired broadcast status notes."""
+    items: list[StatusNoteItem] = []
+    for note in notes:
+        if note.expiresAt > now:
+            user = displayOrUnknown(note.userName)
+            message = sanitize(note.message)
+            postedAt = formatTime(note.postedAt)
+            expiresAt = formatTime(note.expiresAt)
+            items.append(
+                StatusNoteItem(
+                    noteId=note.noteId,
+                    user=user,
+                    message=message,
+                    postedAt=postedAt,
+                    expiresAt=expiresAt,
+                    line=f"[{user}] {message} (posted {postedAt}, expires {expiresAt})",
+                )
+            )
+    return tuple(items)

@@ -27,10 +27,12 @@ from pc_handoff.ui.view_model import (
     BADGE_ERROR,
     BADGE_SUCCESS,
     DISCONNECTED_COLUMNS,
+    RESERVATION_COLUMNS,
     DashboardViewModel,
     buildViewModel,
     configWarningLine,
     escapeMarkdown,
+    sanitize,
     visibleNotices,
 )
 
@@ -39,6 +41,9 @@ NOT_STARTED_MESSAGE = "Start PC Handoff with: python -m pc_handoff"
 WAITING_MESSAGE = "Waiting for the first status update."
 DISMISSED_KEY = "dismissedNotices"
 DISMISS_LABEL = "Dismiss"
+RESERVATION_CONTROLS_KEY = "showReservationControls"
+RESERVATION_CONTROLS_LABEL = "Manage reservations & status notes"
+FEEDBACK_ERROR_KEY = "reservationFeedbackError"
 
 logger = logging.getLogger(f"{LOGGER_NAME}.ui")
 
@@ -46,6 +51,45 @@ logger = logging.getLogger(f"{LOGGER_NAME}.ui")
 def dismissNotice(noticeId: str) -> None:
     """Button callback: hide one notice for this browser session only."""
     st.session_state[DISMISSED_KEY].add(noticeId)
+
+
+def _runAction(action) -> None:
+    """Run a reservation or status-note callback, recording any validation error for the UI."""
+    try:
+        action()
+    except ValueError as exc:
+        st.session_state[FEEDBACK_ERROR_KEY] = sanitize(str(exc))
+
+
+def handleJoinQueue(manager) -> None:
+    userName = st.session_state.get("joinUserName", "")
+    duration = int(st.session_state.get("joinDurationMinutes", 60))
+    notes = st.session_state.get("joinNotes", "") or None
+    _runAction(lambda: manager.enqueueReservation(userName, duration, notes=notes))
+
+
+def handleCancel(manager, reservationId: str) -> None:
+    _runAction(lambda: manager.cancelReservation(reservationId))
+
+
+def handleClaim(manager, reservationId: str) -> None:
+    _runAction(lambda: manager.claimHandoff(reservationId))
+
+
+def handleInitiateHandoff(manager) -> None:
+    offerer = st.session_state.get("handoffOfferer", "").strip() or None
+    _runAction(lambda: manager.initiateHandoff(offerer))
+
+
+def handlePostStatusNote(manager) -> None:
+    userName = st.session_state.get("noteUserName", "")
+    message = st.session_state.get("noteMessage", "")
+    ttl = int(st.session_state.get("noteTtlMinutes", 120))
+    _runAction(lambda: manager.postStatusNote(userName, message, ttlMinutes=ttl))
+
+
+def handleClearNote(manager, noteId: str) -> None:
+    _runAction(lambda: manager.clearStatusNote(noteId))
 
 
 def table(rows, columns) -> pd.DataFrame:
@@ -81,8 +125,92 @@ def renderViewModel(model: DashboardViewModel) -> None:
         st.subheader(escapeMarkdown(model.disconnectedHeading), anchor=False)
         st.dataframe(table(model.disconnectedRows, DISCONNECTED_COLUMNS), hide_index=True)
 
+    if model.handoffBanner is not None:
+        st.markdown(escapeMarkdown(model.handoffBanner))
+    if model.reservationRows:
+        st.subheader(escapeMarkdown(model.reservationHeading), anchor=False)
+        st.dataframe(table(model.reservationRows, RESERVATION_COLUMNS), hide_index=True)
+    if model.statusNoteItems:
+        st.subheader(escapeMarkdown(model.statusNotesHeading), anchor=False)
+        for note in model.statusNoteItems:
+            st.markdown(escapeMarkdown(note.line))
+
     st.caption(escapeMarkdown(model.lastUpdatedLine))
     st.caption(escapeMarkdown(model.footer))
+
+
+def renderReservationControls(runtime, model: DashboardViewModel) -> None:
+    manager = getattr(runtime, "reservationManager", None)
+    if manager is None:
+        return
+    feedbackError = st.session_state.pop(FEEDBACK_ERROR_KEY, None)
+    if feedbackError:
+        st.warning(escapeMarkdown(feedbackError))
+
+    for row in model.reservationRows:
+        if row.canClaim:
+            st.button(
+                f"Claim Now ({row.user})",
+                key=f"claim-{row.reservationId}",
+                on_click=handleClaim,
+                args=(manager, row.reservationId),
+            )
+        st.button(
+            f"Cancel ({row.user})",
+            key=f"cancel-{row.reservationId}",
+            on_click=handleCancel,
+            args=(manager, row.reservationId),
+        )
+
+    for note in model.statusNoteItems:
+        st.button(
+            f"Clear note ({note.user})",
+            key=f"clear-note-{note.noteId}",
+            on_click=handleClearNote,
+            args=(manager, note.noteId),
+        )
+
+    if st.checkbox(RESERVATION_CONTROLS_LABEL, key=RESERVATION_CONTROLS_KEY):
+        if not model.reservationRows:
+            st.text(model.emptyQueueMessage or "")
+        st.text_input("Your user name", key="joinUserName", max_chars=64)
+        st.number_input(
+            "Estimated duration (minutes)",
+            min_value=5,
+            max_value=480,
+            value=60,
+            step=15,
+            key="joinDurationMinutes",
+        )
+        st.text_input("Notes (optional)", key="joinNotes", max_chars=280)
+        st.button("Join Queue", key="joinQueueBtn", on_click=handleJoinQueue, args=(manager,))
+
+        st.text_input(
+            "Current user offering handoff (optional)", key="handoffOfferer", max_chars=64
+        )
+        st.button(
+            "Ready to Handoff",
+            key="initiateHandoffBtn",
+            on_click=handleInitiateHandoff,
+            args=(manager,),
+        )
+
+        st.text_input("Note author", key="noteUserName", max_chars=64)
+        st.text_input("Status message", key="noteMessage", max_chars=280)
+        st.number_input(
+            "Note TTL (minutes)",
+            min_value=5,
+            max_value=1440,
+            value=120,
+            step=15,
+            key="noteTtlMinutes",
+        )
+        st.button(
+            "Post Status Note",
+            key="postStatusNoteBtn",
+            on_click=handlePostStatusNote,
+            args=(manager,),
+        )
 
 
 def guarded(render, runtime) -> None:
@@ -112,7 +240,9 @@ def renderStatus(runtime) -> None:
     if snapshot is None:
         st.info(WAITING_MESSAGE)
         return
-    renderViewModel(buildViewModel(snapshot, runtime.clock.now()))
+    model = buildViewModel(snapshot, runtime.clock.now())
+    renderViewModel(model)
+    renderReservationControls(runtime, model)
 
 
 def statusArea(runtime) -> None:
