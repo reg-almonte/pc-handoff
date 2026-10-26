@@ -26,7 +26,13 @@ from enum import StrEnum
 
 from pc_handoff.clock import Clock
 from pc_handoff.detection.provider import OsSession
-from pc_handoff.domain.models import PcStatus, StatusDocument, StatusSession, TrackedSession
+from pc_handoff.domain.models import (
+    EventReason,
+    PcStatus,
+    StatusDocument,
+    StatusSession,
+    TrackedSession,
+)
 from pc_handoff.domain.reconciliation import (
     OpenPeriodRecord,
     Reconciler,
@@ -34,12 +40,19 @@ from pc_handoff.domain.reconciliation import (
     openPeriodsFromStatus,
     trackedFromStatusSession,
 )
+from pc_handoff.domain.reservations import (
+    QueueState,
+    TransitionOutcome,
+    emptyQueueState,
+    evaluateTick,
+)
 from pc_handoff.domain.tracker import PollOutcome, SessionTracker, TrackerState
 from pc_handoff.persistence.activity_log_store import ActivityLogStore
 from pc_handoff.persistence.atomic import cleanupTempFiles
 from pc_handoff.persistence.config_store import Config, ConfigLoadResult, loadConfig
 from pc_handoff.persistence.notices import StartupNotice
 from pc_handoff.persistence.paths import ACTIVITY_LOG_FILE_NAME, STATUS_FILE_NAME, DataPaths
+from pc_handoff.persistence.reservation_store import ReservationStore
 from pc_handoff.persistence.status_store import StatusStore
 
 SOURCE_THREE_WARNING = "open usage periods in backups cannot be closed (accepted limitation)"
@@ -75,6 +88,9 @@ class StartupContext:
     activityLogUsable: bool
     statusStore: StatusStore
     activityStore: ActivityLogStore
+    queueState: QueueState | None = None
+    reservationsUsable: bool = False
+    reservationStore: ReservationStore | None = None
 
     @property
     def statusSessions(self) -> tuple[StatusSession, ...]:
@@ -101,10 +117,17 @@ def loadStartup(
     statusResult = statusStore.loadAtStartup()
     activityStore = ActivityLogStore(paths, clock, logger)
     activityResult = activityStore.loadAtStartup()
+    reservationStore = ReservationStore(paths, clock, logger)
+    reservationResult = reservationStore.loadAtStartup()
 
     notices = tuple(
         n
-        for n in (configResult.notice, statusResult.notice, activityResult.notice)
+        for n in (
+            configResult.notice,
+            statusResult.notice,
+            activityResult.notice,
+            reservationResult.notice,
+        )
         if n is not None
     )
     statusDocument = statusResult.document if statusResult.usable else None
@@ -140,6 +163,9 @@ def loadStartup(
         activityLogUsable=activityResult.usable,
         statusStore=statusStore,
         activityStore=activityStore,
+        queueState=reservationResult.state,
+        reservationsUsable=reservationResult.usable,
+        reservationStore=reservationStore,
     )
 
 
@@ -178,4 +204,21 @@ def reconcileStartup(
         ctx.statusSessions,
         osSessions,
         detectionTime,
+    )
+
+
+def reconcileReservationsAtStartup(
+    ctx: StartupContext,
+    trackerState: TrackerState,
+    detectionTime: datetime,
+) -> TransitionOutcome:
+    """Reconcile the loaded ``QueueState`` against the reconciled ``trackerState`` at the first
+    successful poll (SD001 section 7)."""
+    initial = ctx.queueState if ctx.queueState is not None else emptyQueueState(detectionTime)
+    return evaluateTick(
+        initial,
+        trackerState.sessions.values(),
+        pcAvailable=(trackerState.status is PcStatus.AVAILABLE),
+        now=detectionTime,
+        reason=EventReason.DETECTED_AT_STARTUP,
     )
