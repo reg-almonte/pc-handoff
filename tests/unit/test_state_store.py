@@ -8,6 +8,7 @@ from datetime import timedelta
 import pytest
 
 from pc_handoff.domain.models import PcStatus
+from pc_handoff.domain.reservations import emptyQueueState, enqueueReservation
 from pc_handoff.persistence.notices import StartupNotice
 from pc_handoff.runtime import registry
 from pc_handoff.runtime.state_store import (
@@ -82,6 +83,13 @@ class TestDashboardSnapshot:
             for i in range(MAX_NOTICES)
         ]
         assert makeSnapshot(notices=notices).notices == tuple(notices)
+
+    def test_queue_state_defaults_to_empty_and_accepts_explicit_state(self):
+        defaultSnap = makeSnapshot()
+        assert defaultSnap.queueState == emptyQueueState(T0)
+        customQueue = enqueueReservation(emptyQueueState(T0), "alice", 60, T0).state
+        customSnap = makeSnapshot(queueState=customQueue)
+        assert customSnap.queueState == customQueue
 
 
 class TestNotice:

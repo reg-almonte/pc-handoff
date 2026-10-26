@@ -114,7 +114,7 @@ graph TD
 
 ### Phase 3: Runtime Service, Concurrency & Poller Integration
 
-#### [ ] `TASK-014`: Thread-Safe ReservationManager & Poller Evaluation
+#### [x] `TASK-014`: Thread-Safe ReservationManager & Poller Evaluation
 - **Branch**: `feature/task014-reservation-runtime`
 - **Labels**: `type:feature`, `area:runtime`
 - **Files**:
