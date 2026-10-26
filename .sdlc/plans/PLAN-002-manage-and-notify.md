@@ -63,7 +63,7 @@ graph TD
 
 ### Phase 1: Domain Models, Schemas & Config Settings
 
-#### [ ] `TASK-018`: Domain Models, Schemas & Notification Config Settings
+#### [x] `TASK-018`: Domain Models, Schemas & Notification Config Settings
 - **Branch**: `feature/task018-models-schemas-config`
 - **Labels**: `type:feature`, `area:runtime`, `area:persistence`
 - **Files**:

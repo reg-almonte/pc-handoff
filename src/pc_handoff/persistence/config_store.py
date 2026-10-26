@@ -41,6 +41,21 @@ SETTINGS: tuple[tuple[str, int, int, int], ...] = (
 )
 SCHEMA_VERSION_KEY = "schemaVersion"
 
+HOST_NOTIFICATION_METHODS: tuple[str, ...] = ("toast", "msg", "none")
+DEFAULT_ENABLE_HOST_NOTIFICATIONS = True
+DEFAULT_HOST_NOTIFICATION_METHOD = "toast"
+DEFAULT_HOST_NOTIFICATION_TIMEOUT_SECONDS = 10
+MIN_HOST_NOTIFICATION_TIMEOUT_SECONDS = 2
+MAX_HOST_NOTIFICATION_TIMEOUT_SECONDS = 60
+
+OPTIONAL_KEYS: frozenset[str] = frozenset(
+    {
+        "enableHostNotifications",
+        "hostNotificationMethod",
+        "hostNotificationTimeoutSeconds",
+    }
+)
+
 
 @dataclass(frozen=True)
 class Config:
@@ -50,6 +65,9 @@ class Config:
     sessionPollIntervalSeconds: int = 5
     dashboardPort: int = 8501
     schemaVersion: int = SCHEMA_VERSION
+    enableHostNotifications: bool = DEFAULT_ENABLE_HOST_NOTIFICATIONS
+    hostNotificationMethod: str = DEFAULT_HOST_NOTIFICATION_METHOD
+    hostNotificationTimeoutSeconds: int = DEFAULT_HOST_NOTIFICATION_TIMEOUT_SECONDS
 
 
 DEFAULT_CONFIG_DOCUMENT: dict[str, int] = {
@@ -84,9 +102,10 @@ def corruptionReason(doc: object) -> str | None:
 def parseConfig(doc: dict[str, Any]) -> tuple[Config, list[str]]:
     """Apply per-field fallback to a document that is not whole-file corrupt (AC-15).
 
-    Warnings come in ``SETTINGS`` order, then one per unknown key in file order.
+    Warnings come in ``SETTINGS`` order, then optional host notification settings, then one per
+    unknown key in file order.
     """
-    values: dict[str, int] = {}
+    values: dict[str, Any] = {}
     warnings: list[str] = []
     for name, minimum, maximum, default in SETTINGS:
         value = doc.get(name)
@@ -100,7 +119,55 @@ def parseConfig(doc: dict[str, Any]) -> tuple[Config, list[str]]:
             )
         else:
             values[name] = value
-    known = {SCHEMA_VERSION_KEY, *(name for name, _, _, _ in SETTINGS)}
+
+    if "enableHostNotifications" in doc:
+        enabled = doc["enableHostNotifications"]
+        if not isinstance(enabled, bool):
+            warnings.append(
+                "enableHostNotifications: wrong type (expected boolean); "
+                f"default {DEFAULT_ENABLE_HOST_NOTIFICATIONS} applied"
+            )
+        else:
+            values["enableHostNotifications"] = enabled
+
+    if "hostNotificationMethod" in doc:
+        method = doc["hostNotificationMethod"]
+        if not isinstance(method, str):
+            warnings.append(
+                "hostNotificationMethod: wrong type (expected string); "
+                f"default {DEFAULT_HOST_NOTIFICATION_METHOD!r} applied"
+            )
+        elif method not in HOST_NOTIFICATION_METHODS:
+            allowed = ", ".join(repr(m) for m in HOST_NOTIFICATION_METHODS)
+            warnings.append(
+                f"hostNotificationMethod: {method!r} is not one of {allowed}; "
+                f"default {DEFAULT_HOST_NOTIFICATION_METHOD!r} applied"
+            )
+        else:
+            values["hostNotificationMethod"] = method
+
+    if "hostNotificationTimeoutSeconds" in doc:
+        timeout = doc["hostNotificationTimeoutSeconds"]
+        if not isStrictInt(timeout):
+            warnings.append(
+                "hostNotificationTimeoutSeconds: wrong type (expected integer); "
+                f"default {DEFAULT_HOST_NOTIFICATION_TIMEOUT_SECONDS} applied"
+            )
+        elif not (
+            MIN_HOST_NOTIFICATION_TIMEOUT_SECONDS
+            <= timeout
+            <= MAX_HOST_NOTIFICATION_TIMEOUT_SECONDS
+        ):
+            warnings.append(
+                f"hostNotificationTimeoutSeconds: {timeout} out of range "
+                f"{MIN_HOST_NOTIFICATION_TIMEOUT_SECONDS}-"
+                f"{MAX_HOST_NOTIFICATION_TIMEOUT_SECONDS}; "
+                f"default {DEFAULT_HOST_NOTIFICATION_TIMEOUT_SECONDS} applied"
+            )
+        else:
+            values["hostNotificationTimeoutSeconds"] = timeout
+
+    known = {SCHEMA_VERSION_KEY, *(name for name, _, _, _ in SETTINGS), *OPTIONAL_KEYS}
     warnings.extend(f"{key}: unknown setting ignored" for key in doc if key not in known)
     return Config(**values), warnings
 

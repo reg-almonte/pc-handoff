@@ -70,10 +70,20 @@ class HandoffStatus(StrEnum):
     TIMED_OUT = "TIMED_OUT"
 
 
+class NoteCategory(StrEnum):
+    """Category tag for a broadcast status note (SD002 section 5.1)."""
+
+    GENERAL = "general"
+    URGENT = "urgent"
+    MAINTENANCE = "maintenance"
+    LONG_RUNNING = "long_running"
+
+
 class ReservationEventType(StrEnum):
-    """Audit event types for reservation, handoff, and status note actions (SD001 section 6)."""
+    """Audit event types for reservation, handoff, and status note actions (SD001/SD002)."""
 
     RESERVATION_QUEUED = "reservation_queued"
+    RESERVATION_UPDATED = "reservation_updated"
     RESERVATION_CANCELLED = "reservation_cancelled"
     HANDOFF_INITIATED = "handoff_initiated"
     HANDOFF_CLAIMED = "handoff_claimed"
@@ -143,6 +153,16 @@ def validateTtlMinutes(ttlMinutes: int) -> int:
             f"ttlMinutes must be between {MIN_NOTE_TTL_MINUTES} and {MAX_NOTE_TTL_MINUTES}"
         )
     return ttlMinutes
+
+
+def validateCategory(category: NoteCategory | str | None) -> NoteCategory:
+    if category is None:
+        return NoteCategory.GENERAL
+    if isinstance(category, NoteCategory):
+        return category
+    if not isinstance(category, str):
+        raise ValueError("category must be a string or NoteCategory")
+    return NoteCategory(category.strip().lower())
 
 
 # --- domain models ------------------------------------------------------------------------
@@ -244,13 +264,14 @@ HandoffSession = HandoffState
 
 @dataclass(frozen=True)
 class StatusNote:
-    """A broadcast user-to-user status note with time-to-live (SD001 section 2.4)."""
+    """A broadcast user-to-user status note with time-to-live (SD001 section 2.4, SD002 5.1)."""
 
     noteId: str
     userName: str
     message: str
     postedAt: datetime
     expiresAt: datetime
+    category: NoteCategory = NoteCategory.GENERAL
 
     def toJson(self) -> dict[str, Any]:
         return {
@@ -259,6 +280,7 @@ class StatusNote:
             "message": self.message,
             "postedAt": toIso(self.postedAt),
             "expiresAt": toIso(self.expiresAt),
+            "category": self.category.value,
         }
 
     @classmethod
@@ -270,6 +292,7 @@ class StatusNote:
                 message=validateMessage(doc["message"]),
                 postedAt=parseIsoStrict(doc["postedAt"]),
                 expiresAt=parseIsoStrict(doc["expiresAt"]),
+                category=validateCategory(doc.get("category")),
             )
 
         return convertJson("status note", build)
@@ -366,6 +389,7 @@ class ReservationAuditEvent:
     noteId: str | None = None
     message: str | None = None
     expiresAt: datetime | None = None
+    category: NoteCategory | None = None
 
     def toJson(self) -> dict[str, Any]:
         if self.eventType is ReservationEventType.STATUS_NOTE_POSTED:
@@ -379,6 +403,7 @@ class ReservationAuditEvent:
                 "userName": self.userName,
                 "message": self.message,
                 "expiresAt": toIso(self.expiresAt),
+                "category": (self.category or NoteCategory.GENERAL).value,
                 "reason": self.reason.value,
             }
         if self.reservationId is None or self.requestedDurationMinutes is None:
@@ -411,6 +436,7 @@ class ReservationAuditEvent:
                     noteId=doc["noteId"],
                     message=validateMessage(doc["message"]),
                     expiresAt=parseIsoStrict(doc["expiresAt"]),
+                    category=validateCategory(doc.get("category")),
                 )
             offeredBy = doc["offeredByUserName"]
             return cls(
@@ -462,6 +488,7 @@ def newStatusNoteEvent(
         noteId=note.noteId,
         message=note.message,
         expiresAt=note.expiresAt,
+        category=note.category,
     )
 
 
@@ -595,6 +622,108 @@ def enqueueReservation(
             statusNotes=keptNotes,
         ),
         events=tuple(events),
+    )
+
+
+@dataclass(frozen=True)
+class WaitEstimate:
+    """Estimated wait duration and start time for joining or waiting in the queue (SD002 3.2)."""
+
+    waitMinutes: int
+    estimatedStartAt: datetime
+
+
+def _remainingActiveMinutes(active: Reservation, now: datetime) -> int:
+    if active.activatedAt is None:
+        return active.requestedDurationMinutes
+    remainingSeconds = (
+        active.activatedAt + timedelta(minutes=active.requestedDurationMinutes) - now
+    ).total_seconds()
+    if remainingSeconds <= 0:
+        return 0
+    return int((remainingSeconds + 59) // 60)
+
+
+def estimateWaitMinutes(
+    state: QueueState,
+    now: datetime,
+    *,
+    reservationId: str | None = None,
+) -> int:
+    """Calculate estimated wait time in minutes before a new or existing reservation starts.
+
+    When ``reservationId`` is ``None``, returns the wait time for a new user joining at the tail
+    of the queue (active remaining + ready duration + all queued durations). When
+    ``reservationId`` identifies a ``QUEUED`` reservation, sums only slots ahead of it; for an
+    ``ACTIVE`` or ``READY`` reservation, returns ``0``.
+    """
+    if reservationId is not None:
+        target = state.findById(reservationId)
+        if target is None or target.status.isTerminal:
+            raise ValueError(f"active or queued reservation not found: {reservationId!r}")
+        if target.status in (ReservationStatus.ACTIVE, ReservationStatus.READY):
+            return 0
+
+    total = 0
+    if state.activeReservation is not None:
+        total += _remainingActiveMinutes(state.activeReservation, now)
+    if state.readyReservation is not None:
+        total += state.readyReservation.requestedDurationMinutes
+
+    for queued in state.queuedReservations:
+        if reservationId is not None and queued.reservationId == reservationId:
+            break
+        total += queued.requestedDurationMinutes
+    return total
+
+
+def estimateQueueWait(
+    state: QueueState,
+    now: datetime,
+    *,
+    reservationId: str | None = None,
+) -> WaitEstimate:
+    """Return a ``WaitEstimate`` with ``waitMinutes`` and ``estimatedStartAt``."""
+    minutes = estimateWaitMinutes(state, now, reservationId=reservationId)
+    return WaitEstimate(
+        waitMinutes=minutes,
+        estimatedStartAt=now + timedelta(minutes=minutes),
+    )
+
+
+def updateReservation(
+    state: QueueState,
+    reservationId: str,
+    requestedDurationMinutes: int,
+    now: datetime,
+    *,
+    notes: str | None = None,
+) -> TransitionOutcome:
+    """Update ``requestedDurationMinutes`` and ``notes`` on a ``QUEUED`` reservation without
+    forfeiting its position in the queue (SD002 section 5.2)."""
+    target = state.findById(reservationId)
+    if target is None or target.status is not ReservationStatus.QUEUED:
+        raise ValueError(f"queued reservation not found: {reservationId!r}")
+
+    cleanDuration = validateDurationMinutes(requestedDurationMinutes)
+    cleanNotes = validateNotes(notes)
+
+    updated = replace(
+        target,
+        requestedDurationMinutes=cleanDuration,
+        notes=cleanNotes,
+    )
+    working = [updated if r.reservationId == reservationId else r for r in state.reservations]
+    event = newReservationEvent(updated, ReservationEventType.RESERVATION_UPDATED, now)
+    keptReservations, keptNotes = _pruneAndBound(working, state.statusNotes, now)
+    return TransitionOutcome(
+        state=replace(
+            state,
+            updatedAt=now,
+            reservations=keptReservations,
+            statusNotes=keptNotes,
+        ),
+        events=(event,),
     )
 
 
@@ -787,11 +916,13 @@ def postStatusNote(
     now: datetime,
     *,
     ttlMinutes: int = DEFAULT_NOTE_TTL_MINUTES,
+    category: NoteCategory | str = NoteCategory.GENERAL,
 ) -> TransitionOutcome:
     """Post a new broadcast ``StatusNote`` and prune expired notes."""
     cleanUser = validateUserName(userName)
     cleanMessage = validateMessage(message)
     cleanTtl = validateTtlMinutes(ttlMinutes)
+    cleanCategory = validateCategory(category)
 
     note = StatusNote(
         noteId=str(uuid.uuid4()),
@@ -799,6 +930,7 @@ def postStatusNote(
         message=cleanMessage,
         postedAt=now,
         expiresAt=now + timedelta(minutes=cleanTtl),
+        category=cleanCategory,
     )
     event = newStatusNoteEvent(note, now)
     keptReservations, keptNotes = _pruneAndBound(

@@ -13,17 +13,22 @@ from pc_handoff.domain.reservations import (
     MAX_RETAINED_TERMINAL,
     MAX_STATUS_NOTES,
     HandoffStatus,
+    NoteCategory,
     Reservation,
     ReservationEventType,
     ReservationStatus,
+    WaitEstimate,
     cancelReservation,
     claimHandoff,
     clearStatusNote,
     emptyQueueState,
     enqueueReservation,
+    estimateQueueWait,
+    estimateWaitMinutes,
     evaluateTick,
     initiateHandoff,
     postStatusNote,
+    updateReservation,
 )
 
 TZ = timezone(timedelta(hours=9))
@@ -135,6 +140,98 @@ def test_terminal_reservations_are_bounded_to_max_retained() -> None:
     outcome = enqueueReservation(state, "new-user", 30, at(100))
     assert len(outcome.state.reservations) == MAX_RETAINED_TERMINAL + 1
     assert outcome.state.reservations[0].userName == "new-user"
+
+
+# --- updateReservation & wait estimation --------------------------------------------------
+
+
+def test_update_reservation_modifies_queued_slot_in_place_and_emits_audit_event() -> None:
+    s0 = emptyQueueState(at(0))
+    s1 = enqueueReservation(s0, "alice", 60, at(1), pcAvailable=True).state
+    s2 = enqueueReservation(s1, "bob", 30, at(2), notes="Old note", pcAvailable=True).state
+    s3 = enqueueReservation(s2, "carol", 45, at(3), pcAvailable=True).state
+    aliceId = s3.reservations[0].reservationId
+    bobId = s3.reservations[1].reservationId
+    carolId = s3.reservations[2].reservationId
+
+    out = updateReservation(s3, bobId, 90, at(4), notes="Updated note")
+    assert [r.reservationId for r in out.state.queuedReservations] == [bobId, carolId]
+    updatedBob = out.state.findById(bobId)
+    assert updatedBob is not None
+    assert updatedBob.requestedDurationMinutes == 90
+    assert updatedBob.notes == "Updated note"
+    assert [e.eventType for e in out.events] == [ReservationEventType.RESERVATION_UPDATED]
+    assert out.events[0].reservationId == bobId
+    assert out.events[0].requestedDurationMinutes == 90
+    assert out.events[0].notes == "Updated note"
+
+    # Non-existent or non-QUEUED (e.g. READY) reservation raises ValueError.
+    with pytest.raises(ValueError, match="queued reservation not found"):
+        updateReservation(out.state, "missing-id", 45, at(5))
+    with pytest.raises(ValueError, match="queued reservation not found"):
+        updateReservation(out.state, aliceId, 45, at(5))
+
+
+def test_estimate_wait_minutes_and_queue_wait_across_states() -> None:
+    s0 = emptyQueueState(at(0))
+    assert estimateQueueWait(s0, at(0)) == WaitEstimate(waitMinutes=0, estimatedStartAt=at(0))
+
+    # Active reservation (60m, activated at t=0), Ready reservation (30m), two Queued (45m, 20m).
+    rActive = Reservation(
+        reservationId=str(uuid.uuid4()),
+        userName="alice",
+        requestedDurationMinutes=60,
+        queuedAt=at(0),
+        status=ReservationStatus.ACTIVE,
+        activatedAt=at(0),
+    )
+    rReady = Reservation(
+        reservationId=str(uuid.uuid4()),
+        userName="bob",
+        requestedDurationMinutes=30,
+        queuedAt=at(1),
+        status=ReservationStatus.READY,
+        readyAt=at(2),
+        claimExpiresAt=at(7),
+    )
+    rQueued1 = Reservation(
+        reservationId=str(uuid.uuid4()),
+        userName="carol",
+        requestedDurationMinutes=45,
+        queuedAt=at(3),
+        status=ReservationStatus.QUEUED,
+    )
+    rQueued2 = Reservation(
+        reservationId=str(uuid.uuid4()),
+        userName="dave",
+        requestedDurationMinutes=20,
+        queuedAt=at(4),
+        status=ReservationStatus.QUEUED,
+    )
+    state = replace(s0, reservations=(rActive, rReady, rQueued1, rQueued2))
+
+    # At t=15m: active has 45m remaining.
+    # - Active/Ready slots have 0 wait.
+    assert estimateWaitMinutes(state, at(15), reservationId=rActive.reservationId) == 0
+    assert estimateWaitMinutes(state, at(15), reservationId=rReady.reservationId) == 0
+    # - First queued (carol) waits for active (45m) + ready (30m) = 75m.
+    assert estimateWaitMinutes(state, at(15), reservationId=rQueued1.reservationId) == 75
+    # - Second queued (dave) waits 75m + carol (45m) = 120m.
+    assert estimateWaitMinutes(state, at(15), reservationId=rQueued2.reservationId) == 120
+    # - New user joining at tail waits 120m + dave (20m) = 140m.
+    est = estimateQueueWait(state, at(15))
+    assert est == WaitEstimate(waitMinutes=140, estimatedStartAt=at(155))
+
+    # Past active duration (t=70m): active remaining clamps to 0.
+    assert estimateWaitMinutes(state, at(70), reservationId=rQueued1.reservationId) == 30
+
+    # Active with activatedAt=None uses full requestedDurationMinutes.
+    stateNoActivatedAt = replace(state, reservations=(replace(rActive, activatedAt=None),))
+    assert estimateWaitMinutes(stateNoActivatedAt, at(15)) == 60
+
+    # Unknown or terminal reservationId raises ValueError.
+    with pytest.raises(ValueError, match="not found"):
+        estimateWaitMinutes(state, at(15), reservationId="unknown")
 
 
 # --- cancelReservation --------------------------------------------------------------------
@@ -251,9 +348,18 @@ def test_claim_handoff_from_ready_and_head_queued_and_error_cases() -> None:
 def test_post_and_clear_status_notes_and_max_bound() -> None:
     state = emptyQueueState(at(0))
     for i in range(MAX_STATUS_NOTES + 3):
-        out = postStatusNote(state, f"user{i}", f"msg {i}", at(i), ttlMinutes=60)
+        out = postStatusNote(
+            state,
+            f"user{i}",
+            f"msg {i}",
+            at(i),
+            ttlMinutes=60,
+            category=NoteCategory.URGENT,
+        )
         state = out.state
         assert [e.eventType for e in out.events] == [ReservationEventType.STATUS_NOTE_POSTED]
+        assert out.events[0].category is NoteCategory.URGENT
+        assert state.statusNotes[0].category is NoteCategory.URGENT
 
     assert len(state.statusNotes) == MAX_STATUS_NOTES
     newestId = state.statusNotes[0].noteId

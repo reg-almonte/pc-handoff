@@ -11,6 +11,7 @@ from pc_handoff.domain.reservations import (
     HandoffSession,
     HandoffState,
     HandoffStatus,
+    NoteCategory,
     QueueState,
     Reservation,
     ReservationAuditEvent,
@@ -22,6 +23,7 @@ from pc_handoff.domain.reservations import (
     newReservationEvent,
     newStatusNoteEvent,
     normalizeUserKey,
+    validateCategory,
     validateDurationMinutes,
     validateMessage,
     validateNotes,
@@ -59,8 +61,15 @@ def test_reservation_and_handoff_enums() -> None:
     assert ReservationStatus.EXPIRED.isTerminal
 
     assert [s.value for s in HandoffStatus] == ["IDLE", "OFFERED", "CLAIMED", "TIMED_OUT"]
+    assert [c.value for c in NoteCategory] == [
+        "general",
+        "urgent",
+        "maintenance",
+        "long_running",
+    ]
     assert [e.value for e in ReservationEventType] == [
         "reservation_queued",
+        "reservation_updated",
         "reservation_cancelled",
         "handoff_initiated",
         "handoff_claimed",
@@ -85,6 +94,9 @@ def test_validation_helpers_accept_valid_inputs() -> None:
     assert validateMessage("  hello team ") == "hello team"
     assert validateTtlMinutes(5) == 5
     assert validateTtlMinutes(1440) == 1440
+    assert validateCategory(None) is NoteCategory.GENERAL
+    assert validateCategory(NoteCategory.URGENT) is NoteCategory.URGENT
+    assert validateCategory("  MAINTENANCE ") is NoteCategory.MAINTENANCE
 
 
 @pytest.mark.parametrize(
@@ -106,6 +118,8 @@ def test_validation_helpers_accept_valid_inputs() -> None:
         (validateTtlMinutes, "30"),
         (validateTtlMinutes, 4),
         (validateTtlMinutes, 1441),
+        (validateCategory, 123),
+        (validateCategory, "invalid_cat"),
     ],
 )
 def test_validation_helpers_reject_invalid_inputs(fn, arg) -> None:
@@ -157,8 +171,16 @@ def test_status_note_json_round_trip() -> None:
         message="Finishing in 10 mins",
         postedAt=at(0),
         expiresAt=at(120),
+        category=NoteCategory.LONG_RUNNING,
     )
-    assert StatusNote.fromJson(json.loads(json.dumps(note.toJson()))) == note
+    doc = json.loads(json.dumps(note.toJson()))
+    assert doc["category"] == "long_running"
+    assert StatusNote.fromJson(doc) == note
+
+    # Missing category in legacy JSON defaults to GENERAL.
+    legacy = dict(doc)
+    legacy.pop("category")
+    assert StatusNote.fromJson(legacy).category is NoteCategory.GENERAL
 
 
 def test_queue_state_helpers_and_json_round_trip() -> None:
