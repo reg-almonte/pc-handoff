@@ -325,7 +325,7 @@ def test_the_page_shows_at_most_the_retained_notices(tmp_path):
     runtime.publishState(runtime.trackerState)
     app = run(runtime)
     assert shown(app.warning)[-MAX_NOTICES:] == [f"notice {i}" for i in range(3, MAX_NOTICES + 3)]
-    assert len(app.button) == MAX_NOTICES
+    assert len([b for b in app.button if b.label == "Dismiss"]) == MAX_NOTICES
 
 
 # --- AC-9: refresh ------------------------------------------------------------------------

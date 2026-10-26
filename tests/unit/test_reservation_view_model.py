@@ -6,6 +6,7 @@ from datetime import timedelta
 from pc_handoff.domain.reservations import (
     HandoffState,
     HandoffStatus,
+    NoteCategory,
     QueueState,
     emptyQueueState,
     enqueueReservation,
@@ -14,14 +15,25 @@ from pc_handoff.domain.reservations import (
     postStatusNote,
 )
 from pc_handoff.runtime.state_store import DashboardSnapshot
+from pc_handoff.ui.navigation import (
+    LEGACY_CONTROLS_KEY,
+    VIEW_MANAGE,
+    VIEW_STATE_KEY,
+    VIEW_STATUS,
+    NavigationController,
+)
 from pc_handoff.ui.view_model import (
+    DEFAULT_WAIT_ESTIMATE_LINE,
     EMPTY_QUEUE_MESSAGE,
     RESERVATION_COLUMNS,
     RESERVATION_HEADING,
     STATUS_NOTES_HEADING,
     buildViewModel,
     formatTime,
+    generateRdpFileContent,
     handoffBannerLine,
+    resolveRdpHost,
+    waitEstimateText,
 )
 from tests.conftest import FAKE_CLOCK_START
 from tests.fakes.builders import trackerState
@@ -145,3 +157,55 @@ class TestReservationViewModel:
         vmLater = buildViewModel(snapshotWithQueue(q2), T0 + timedelta(minutes=15))
         assert len(vmLater.statusNoteItems) == 1
         assert vmLater.statusNoteItems[0].user == "bob"
+
+    def test_wait_estimate_rdp_generation_note_category_and_navigation(self, monkeypatch) -> None:
+        emptyState = emptyQueueState(T0)
+        assert waitEstimateText(emptyState, T0) == DEFAULT_WAIT_ESTIMATE_LINE
+
+        q1 = enqueueReservation(emptyState, "alice", 30, T0, pcAvailable=False).state
+        estLine = waitEstimateText(q1, T0)
+        assert "Wait: ~30 min" in estLine
+        assert formatTime(T0 + timedelta(minutes=30)) in estLine
+
+        vm = buildViewModel(snapshotWithQueue(q1), T0)
+        assert vm.waitEstimateLine == estLine
+        assert vm.reservationRows[0].canEdit is True
+        assert vm.reservationRows[0].durationMinutes == 30
+
+        qNote = postStatusNote(
+            emptyState,
+            "alice",
+            "Server patching",
+            T0,
+            ttlMinutes=60,
+            category=NoteCategory.MAINTENANCE,
+        ).state
+        vmNote = buildViewModel(snapshotWithQueue(qNote), T0)
+        assert vmNote.statusNoteItems[0].category == "maintenance"
+        assert vmNote.statusNoteItems[0].categoryLabel == "Maintenance"
+        assert "[Maintenance]" in vmNote.statusNoteItems[0].line
+
+        rdp = generateRdpFileContent("lab-pc-01\x00", 3389)
+        assert "full address:s:lab-pc-01:3389\n" in rdp
+        assert "prompt for credentials:i:1\n" in rdp
+        assert "full address:s:localhost:3389\n" in generateRdpFileContent("   ", 0)
+
+        monkeypatch.setenv("COMPUTERNAME", "RIG-09")
+        assert resolveRdpHost() == "RIG-09"
+        monkeypatch.setenv("COMPUTERNAME", "   ")
+        assert resolveRdpHost() == "localhost"
+
+        # NavigationController state transitions
+        sessionState: dict[str, object] = {}
+        assert NavigationController.currentView(sessionState) == VIEW_STATUS
+        NavigationController.goToManage(sessionState)
+        assert NavigationController.currentView(sessionState) == VIEW_MANAGE
+        NavigationController.goToStatus(sessionState)
+        assert NavigationController.currentView(sessionState) == VIEW_STATUS
+
+        sessionState[LEGACY_CONTROLS_KEY] = True
+        assert NavigationController.currentView(sessionState) == VIEW_MANAGE
+        assert sessionState[VIEW_STATE_KEY] == VIEW_MANAGE
+        NavigationController.goToStatus(sessionState)
+        assert sessionState[LEGACY_CONTROLS_KEY] is False
+        assert NavigationController.currentView(sessionState) == VIEW_STATUS

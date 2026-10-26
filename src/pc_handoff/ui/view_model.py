@@ -17,6 +17,7 @@ characters removed). The page renders it only through dataframe cells, ``st.text
 markdown-rendering elements, ``escapeMarkdown`` (Security constraint).
 """
 
+import os
 import string
 import unicodedata
 from collections.abc import Iterable
@@ -27,10 +28,12 @@ from pc_handoff.domain.models import PcStatus, SessionState, TrackedSession
 from pc_handoff.domain.reservations import (
     HandoffState,
     HandoffStatus,
+    NoteCategory,
     QueueState,
     Reservation,
     ReservationStatus,
     StatusNote,
+    estimateQueueWait,
 )
 from pc_handoff.persistence.paths import CONFIG_FILE_NAME
 from pc_handoff.runtime.state_store import DashboardSnapshot
@@ -69,6 +72,13 @@ DISCONNECTED_COLUMNS = ("User", "Disconnected since")
 RESERVATION_HEADING = "Reservation queue"
 EMPTY_QUEUE_MESSAGE = "No active or queued reservations"
 STATUS_NOTES_HEADING = "Status notes"
+DEFAULT_WAIT_ESTIMATE_LINE = "Estimated wait: ~0 min (Ready now)"
+NOTE_CATEGORY_LABELS: dict[str, str] = {
+    NoteCategory.GENERAL.value: "General",
+    NoteCategory.URGENT.value: "Urgent / Do Not Interrupt",
+    NoteCategory.MAINTENANCE.value: "Maintenance",
+    NoteCategory.LONG_RUNNING.value: "Long-Running Job",
+}
 RESERVATION_COLUMNS = (
     "Position",
     "User",
@@ -213,6 +223,9 @@ class ReservationRow:
     notes: str
     canClaim: bool
     canCancel: bool
+    canEdit: bool = False
+    durationMinutes: int = 60
+    rawNotes: str = ""
 
     def cells(self) -> tuple[str, ...]:
         """The row in ``RESERVATION_COLUMNS`` order."""
@@ -235,6 +248,8 @@ class StatusNoteItem:
     postedAt: str
     expiresAt: str
     line: str
+    category: str = NoteCategory.GENERAL.value
+    categoryLabel: str = "General"
 
 
 @dataclass(frozen=True)
@@ -262,6 +277,7 @@ class DashboardViewModel:
     handoffBanner: str | None = None
     statusNotesHeading: str = STATUS_NOTES_HEADING
     statusNoteItems: tuple[StatusNoteItem, ...] = ()
+    waitEstimateLine: str = DEFAULT_WAIT_ESTIMATE_LINE
 
 
 def buildViewModel(snapshot: DashboardSnapshot, now: datetime) -> DashboardViewModel:
@@ -304,6 +320,7 @@ def buildViewModel(snapshot: DashboardSnapshot, now: datetime) -> DashboardViewM
         handoffBanner=handoffBannerLine(snapshot.queueState.handoff, now),
         statusNotesHeading=STATUS_NOTES_HEADING,
         statusNoteItems=noteItems,
+        waitEstimateLine=waitEstimateText(snapshot.queueState, now),
     )
 
 
@@ -399,6 +416,7 @@ def reservationRow(
     else:
         countdown = "-"
     canClaim = res.status is ReservationStatus.READY or res.reservationId == headQueuedId
+    rawNotes = sanitize(res.notes) if res.notes else ""
     return ReservationRow(
         reservationId=res.reservationId,
         position=str(position),
@@ -407,9 +425,12 @@ def reservationRow(
         requestedDuration=f"{res.requestedDurationMinutes} min",
         queuedAt=formatTime(res.queuedAt),
         claimCountdown=countdown,
-        notes=sanitize(res.notes) if res.notes else "-",
+        notes=rawNotes if rawNotes else "-",
         canClaim=canClaim,
         canCancel=True,
+        canEdit=res.status is ReservationStatus.QUEUED,
+        durationMinutes=res.requestedDurationMinutes,
+        rawNotes=rawNotes,
     )
 
 
@@ -444,6 +465,8 @@ def statusNoteItems(
             message = sanitize(note.message)
             postedAt = formatTime(note.postedAt)
             expiresAt = formatTime(note.expiresAt)
+            category = note.category.value
+            categoryLabel = NOTE_CATEGORY_LABELS.get(category, "General")
             items.append(
                 StatusNoteItem(
                     noteId=note.noteId,
@@ -451,7 +474,38 @@ def statusNoteItems(
                     message=message,
                     postedAt=postedAt,
                     expiresAt=expiresAt,
-                    line=f"[{user}] {message} (posted {postedAt}, expires {expiresAt})",
+                    line=(
+                        f"[{user}] {message} [{categoryLabel}] "
+                        f"(posted {postedAt}, expires {expiresAt})"
+                    ),
+                    category=category,
+                    categoryLabel=categoryLabel,
                 )
             )
     return tuple(items)
+
+
+def waitEstimateText(queueState: QueueState, now: datetime) -> str:
+    """Build the human-readable wait estimate line for ``queueState`` at ``now`` (REQ-003)."""
+    est = estimateQueueWait(queueState, now)
+    if est.waitMinutes <= 0:
+        return DEFAULT_WAIT_ESTIMATE_LINE
+    return (
+        f"Estimated start time: ~{formatTime(est.estimatedStartAt)} (Wait: ~{est.waitMinutes} min)"
+    )
+
+
+def resolveRdpHost() -> str:
+    """Return the local PC host identifier for generated ``.rdp`` files without network I/O."""
+    return os.environ.get("COMPUTERNAME", "").strip() or "localhost"
+
+
+def generateRdpFileContent(host: str = "localhost", port: int = 3389) -> str:
+    """Generate a safe in-memory ``.rdp`` connection file for ``host:port`` (REQ-003)."""
+    safeHost = sanitize(host).strip() or "localhost"
+    safePort = int(port) if 1 <= int(port) <= 65535 else 3389
+    return (
+        f"full address:s:{safeHost}:{safePort}\n"
+        "prompt for credentials:i:1\n"
+        "administrative session:i:0\n"
+    )
