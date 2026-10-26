@@ -265,3 +265,23 @@ def test_windows_notifier_contains_subprocess_errors_and_nonzero_exit(
     assert "host notification command exited with non-zero status" in warnings
     assert "host notification delivery failed" in warnings
     assert "host notification skipped because executor is shut down" in warnings
+
+
+def test_default_runner_uses_noop_in_pytest_and_invokes_monkeypatched_subprocess_run(
+    monkeypatch,
+) -> None:
+    logger = logging.getLogger("pc_handoff.notifications")
+    # Default runner under pytest does not spawn a real process
+    nDefault = WindowsNotifier(logger, method="toast", asyncDispatch=False)
+    nDefault.notify(HostNotification(title="T", body="B"))
+
+    # When subprocess.run is monkeypatched, _defaultRunner delegates to it
+    recorded: list[list[str]] = []
+
+    def fakeSubprocessRun(cmd: list[str], **kwargs: Any) -> subprocess.CompletedProcess[str]:
+        recorded.append(cmd)
+        return subprocess.CompletedProcess(cmd, 0, stdout="", stderr="")
+
+    monkeypatch.setattr(subprocess, "run", fakeSubprocessRun)
+    nDefault.notify(HostNotification(title="T", body="B"))
+    assert len(recorded) == 1

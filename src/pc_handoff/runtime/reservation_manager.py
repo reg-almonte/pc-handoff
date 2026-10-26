@@ -15,6 +15,7 @@ from pc_handoff.domain.models import EventReason, PcStatus
 from pc_handoff.domain.reservations import (
     CLAIM_GRACE_SECONDS,
     DEFAULT_NOTE_TTL_MINUTES,
+    NoteCategory,
     QueueState,
     Reservation,
     ReservationAuditEvent,
@@ -43,7 +44,11 @@ from pc_handoff.domain.reservations import (
 from pc_handoff.domain.reservations import (
     postStatusNote as domainPostStatusNote,
 )
+from pc_handoff.domain.reservations import (
+    updateReservation as domainUpdateReservation,
+)
 from pc_handoff.domain.tracker import TrackerState
+from pc_handoff.notifications.notifier import Notifier, NullNotifier
 from pc_handoff.persistence.activity_log_store import ActivityLogStore
 from pc_handoff.persistence.atomic import PersistenceError
 from pc_handoff.persistence.notices import StartupNotice
@@ -65,6 +70,7 @@ class ReservationManager:
         isPcAvailable: Callable[[], bool] | None = None,
         onStateChanged: Callable[[QueueState, StartupNotice | None], None] | None = None,
         claimGraceSeconds: int = CLAIM_GRACE_SECONDS,
+        notifier: Notifier | None = None,
     ) -> None:
         self._lock = threading.RLock()
         self.reservationStore = reservationStore
@@ -75,9 +81,11 @@ class ReservationManager:
             emptyQueueState(clock.now()) if initialState is None else initialState
         )
         self._dirty = False
+        self._pendingTickEvents: tuple[ReservationAuditEvent, ...] = ()
         self._isPcAvailable = isPcAvailable
         self._onStateChanged = onStateChanged
         self.claimGraceSeconds = claimGraceSeconds
+        self.notifier: Notifier = NullNotifier() if notifier is None else notifier
 
     @property
     def lock(self) -> threading.RLock:
@@ -113,6 +121,28 @@ class ReservationManager:
             created = outcome.state.findByUser(userName)
             assert created is not None
             return created
+
+    def updateReservation(
+        self,
+        reservationId: str,
+        requestedDurationMinutes: int,
+        *,
+        notes: str | None = None,
+    ) -> Reservation:
+        """Update duration and notes on a ``QUEUED`` reservation and persist and publish."""
+        with self._lock:
+            now = self.clock.now()
+            outcome = domainUpdateReservation(
+                self._state,
+                reservationId,
+                requestedDurationMinutes,
+                now,
+                notes=notes,
+            )
+            self._applyMutation(outcome)
+            updated = outcome.state.findById(reservationId)
+            assert updated is not None
+            return updated
 
     def cancelReservation(
         self,
@@ -164,6 +194,7 @@ class ReservationManager:
         message: str,
         *,
         ttlMinutes: int = DEFAULT_NOTE_TTL_MINUTES,
+        category: NoteCategory | str = NoteCategory.GENERAL,
     ) -> StatusNote:
         """Post a broadcast status note and immediately persist and publish."""
         with self._lock:
@@ -174,6 +205,7 @@ class ReservationManager:
                 message,
                 now,
                 ttlMinutes=ttlMinutes,
+                category=category,
             )
             self._applyMutation(outcome)
             return outcome.state.statusNotes[0]
@@ -217,14 +249,19 @@ class ReservationManager:
             if outcome.state != self._state:
                 self._state = outcome.state
                 self._dirty = True
+            self._pendingTickEvents = outcome.events
             return outcome
 
-    def writeCommittedTick(self) -> None:
+    def writeCommittedTick(self, *, notify: bool = True) -> None:
         """Write ``reservations.json`` if the last ``commitTick`` changed ``QueueState``."""
         with self._lock:
+            pendingEvents = self._pendingTickEvents
+            self._pendingTickEvents = ()
             if self._dirty:
                 self._dirty = False
                 self._writeState(self._state)
+            if notify and pendingEvents:
+                self.notifier.notifyEvents(pendingEvents, self._state)
 
     def evaluateTick(
         self,
@@ -237,7 +274,7 @@ class ReservationManager:
         with self._lock:
             outcome = self.commitTick(trackerState, now, reconciling=reconciling)
             if self._dirty:
-                self.writeCommittedTick()
+                self.writeCommittedTick(notify=False)
                 self._persistEventsAndNotify(outcome.events)
             return outcome
 
@@ -259,6 +296,7 @@ class ReservationManager:
         if events:
             result = self.activityStore.appendBatch(events)
             notice = result.notice
+            self.notifier.notifyEvents(events, self._state)
         if self._onStateChanged is not None:
             self._onStateChanged(self._state, notice)
 
