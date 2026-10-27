@@ -103,7 +103,8 @@ class TestReservationViewModel:
         assert readyRow.canClaim is True
         assert queuedRow.canClaim is False
         assert vmReady.handoffBanner == "Handoff offered by dave to alice — claim within 00:04:00"
-        assert vmReady.nextInQueueText == "Next in queue: alice"
+        assert vmReady.nextInQueueText == "Next in queue: alice (Ready: 00:04:00)"
+        assert vmReady.nextInQueueLink == "#reservation-queue"
 
     def test_handoff_banner_variants(self) -> None:
         # Automatic offer (offeredByUserName is None)

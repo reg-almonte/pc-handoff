@@ -98,7 +98,9 @@ REMOVED_CATEGORIES = frozenset({"Cc", "Cf"})
 MARKDOWN_SPECIALS = frozenset(string.punctuation)
 
 
-# --- formatting helpers -------------------------------------------------------------------
+EXPAND_ACTIVE_LINK = "#active-sessions"
+EXPAND_QUEUE_LINK = "#reservation-queue"
+EXPAND_NOTES_LINK = "#status-notes"
 
 
 def formatDuration(seconds: float) -> str:
@@ -283,6 +285,9 @@ class DashboardViewModel:
     waitEstimateLine: str = DEFAULT_WAIT_ESTIMATE_LINE
     nextInQueueText: str = "Next in queue: None"
     compactWaitText: str = DEFAULT_COMPACT_WAIT_TEXT
+    badgeLink: str | None = None
+    nextInQueueLink: str | None = None
+    nextInQueueUser: str | None = None
 
 
 def buildViewModel(snapshot: DashboardSnapshot, now: datetime) -> DashboardViewModel:
@@ -301,11 +306,14 @@ def buildViewModel(snapshot: DashboardSnapshot, now: datetime) -> DashboardViewM
     )
     resRows = reservationRows(snapshot.queueState, now)
     noteItems = statusNoteItems(snapshot.queueState.statusNotes, now)
+    nextQText, nextQUser, nextQLink = nextInQueueInfo(snapshot.queueState, now)
+    badgeLink = EXPAND_ACTIVE_LINK if snapshot.status is PcStatus.IN_USE else None
     lastUpdated = formatTime(now)
     dataUpdatedAt = formatTime(snapshot.updatedAt)
     return DashboardViewModel(
         badgeText=badgeTextFor(snapshot.status, activeRows),
         badgeKind=BADGE_KINDS.get(snapshot.status, BADGE_NEUTRAL),
+        badgeLink=badgeLink,
         unavailableBanner=UNAVAILABLE_BANNER if unknown else None,
         lastKnownLine=lastKnownLine(snapshot) if unknown else None,
         activeHeading=activeHeading(unknown, pollAt),
@@ -326,7 +334,9 @@ def buildViewModel(snapshot: DashboardSnapshot, now: datetime) -> DashboardViewM
         statusNotesHeading=STATUS_NOTES_HEADING,
         statusNoteItems=noteItems,
         waitEstimateLine=waitEstimateText(snapshot.queueState, now),
-        nextInQueueText=nextInQueueLine(snapshot.queueState),
+        nextInQueueText=nextQText,
+        nextInQueueUser=nextQUser,
+        nextInQueueLink=nextQLink,
         compactWaitText=compactWaitLine(snapshot.queueState, now),
     )
 
@@ -355,10 +365,12 @@ def activeHeading(unknown: bool, pollAt: datetime | None) -> str:
 
 
 def badgeTextFor(status: PcStatus, activeRows: Sequence[ActiveRow]) -> str:
-    """Format the primary status badge text (includes ``user (ip)`` when ``In Use``)."""
+    """Format the primary status badge text (includes icon and ``user (ip)`` when ``In Use``)."""
     if status is PcStatus.IN_USE:
         users = ", ".join(f"{row.user} ({row.clientIp})" for row in activeRows)
-        return f"{status.value} — {users}"
+        return f"🔴 {status.value} — {users}"
+    if status is PcStatus.AVAILABLE:
+        return f"🟢 {status.value}"
     return status.value
 
 
@@ -511,13 +523,22 @@ def waitEstimateText(queueState: QueueState, now: datetime) -> str:
     )
 
 
-def nextInQueueLine(queueState: QueueState) -> str:
-    """Build the compact 'Next in queue: <user|None>' summary for the top status strip."""
+def nextInQueueInfo(queueState: QueueState, now: datetime) -> tuple[str, str | None, str | None]:
+    """Return ``(displayText, userOrNone, linkOrNone)`` for the top status strip."""
     if queueState.readyReservation is not None:
-        return f"Next in queue: {displayOrUnknown(queueState.readyReservation.userName)}"
+        user = displayOrUnknown(queueState.readyReservation.userName)
+        if queueState.readyReservation.claimExpiresAt is not None:
+            remaining = formatDuration(
+                (queueState.readyReservation.claimExpiresAt - now).total_seconds()
+            )
+            text = f"Next in queue: {user} (Ready: {remaining})"
+        else:
+            text = f"Next in queue: {user} (Ready)"
+        return text, user, EXPAND_QUEUE_LINK
     if queueState.queuedReservations:
-        return f"Next in queue: {displayOrUnknown(queueState.queuedReservations[0].userName)}"
-    return "Next in queue: None"
+        user = displayOrUnknown(queueState.queuedReservations[0].userName)
+        return f"Next in queue: {user}", user, EXPAND_QUEUE_LINK
+    return "Next in queue: None", None, None
 
 
 def compactWaitLine(queueState: QueueState, now: datetime) -> str:

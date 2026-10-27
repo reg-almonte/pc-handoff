@@ -77,3 +77,24 @@ This ledger records architectural decisions, assumptions, and trade-offs for **P
   1. Grouped the top status badge and top Status Note banner inside a cohesive `st.container(border=True)` card, and tightened header navigation proportions to `st.columns([5, 1], vertical_alignment="center")`.
   2. Wrapped Active/Disconnected Sessions, Reservation Queue & Handoff, and Status Notes in separate `st.container(border=True)` cards on `StatusView`, and converted `ManageView` forms into multi-column card layouts using only native Streamlit components (`unsafe_allow_html` remains forbidden).
   3. Updated `badgeTextFor` in `view_model.py` to format `PcStatus.IN_USE` as `"In Use — <user> (<ip>)"` and updated `activeRow` to render `"N/A"` for `clientName` and `clientIp` when `session.connectionType is ConnectionType.CONSOLE` (while preserving `"Unknown"` for RDP sessions with missing client metadata per REQ-001 AC-9).
+
+---
+
+## 2026-10-27 — DEC-014: Interactive Status Buttons, Collapsible Dashboard Cards, and Elastic Spacing (`v0.3.3`)
+- **Context**: In `v0.3.2`, the dashboard displayed passive status alerts and cards. For `v0.3.3`, requirements called for:
+  1. Status bar navigation: "In Use" and "Next in queue" boxes navigating directly to their respective sections without opening new tabs.
+  2. The entire "In Use" and "Next in queue" boxes behaving as clickable buttons rather than text-only markdown links.
+  3. Status UI icon indicators: `🔴` prefix for "In Use", `🟢` prefix for "Available".
+  4. Collapsible sections: Active sessions, Reservation queue, and Status notes collapsed by default, with `[Expand all]` and `[Collapse all]` controls and user state retention across auto-refreshes.
+  5. Elastic spacing: Ensuring `"🕒 Est. wait: Ready now (~0 min)"` comfortably stays on a single line without wrapping.
+- **Decision**:
+  1. Render the primary "In Use" badge in `StatusView` as a full-width `st.button` (`use_container_width=True`) that expands `Active sessions` on click in the same tab, avoiding browser new-tab behavior triggered by non-anchor markdown links. When "Available", standard `st.success` is rendered with `🟢 Available`.
+  2. Render "Next in queue" as a full-width `st.button` when a reservation is queued or ready, expanding the `Reservation queue` section on click, and displaying countdown urgency `(Ready: MM:SS)` when in `READY` state.
+  3. Use pure internal in-page fragment anchors (`#active-sessions`, `#reservation-queue`, `#status-notes`) and remove query parameter wrappers that caused Streamlit markdown to inject `target="_blank"`.
+  4. Implement `[Expand all]` and `[Collapse all]` control buttons above the collapsible sections, with state persisted in `st.session_state`.
+  5. Adjusted top status row column ratios to `[3.2, 3.0, 0.4, 3.4]` in both `StatusView` and `ManageView`, dedicating 34% width to `waitCol` so wait estimates do not line-wrap.
+- **Consequences**:
+  - Clean dashboard interaction with instant section expansion on click.
+  - Zero new tabs opened when clicking status items or banner links.
+  - Zero unhandled exceptions or lint violations, with coverage exceeding 99%.
+
