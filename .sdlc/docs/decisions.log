@@ -99,3 +99,19 @@ This ledger records architectural decisions, assumptions, and trade-offs for **P
   - Clear faint red / faint green visual status indicator backgrounds preserved.
   - 100% test pass rate (1,591 tests) with 99.81% total coverage.
 
+## 2026-10-27 — DEC-015: Native Interactive Badge Buttons with Content-Hugging Weights and Flex Spacer (`v0.3.3`)
+- **Context**: In review of `v0.3.3`, feedback highlighted:
+  1. The entire status and next-in-queue boxes should function as clickable buttons (not just inline text links inside alerts).
+  2. The Est. Wait box must be pinned to the right edge with flexible space in the center: `[In Use][Next in queue]<--flex space-->[Est. wait]`.
+  3. The boxes should tightly hug the length of the text inside and not look stretched out.
+  4. Faint red (`In Use`) and faint green (`Available`) backgrounds and equal 42px heights must be preserved.
+- **Decision**:
+  1. Render Status, Next in Queue, and Est. Wait as native Streamlit `st.button` elements with scoped CSS (`st.html`) applying 42px heights, soft pastel backgrounds (`rgba(255, 75, 75, 0.12)`, `rgba(33, 195, 84, 0.12)`, `rgba(0, 104, 201, 0.08)`), and border radiuses.
+  2. Arrange columns as `[statusCol, queueCol, _spacer, waitCol]` using dynamic weights from `statusRowColumnWeights` in `view_model.py`. The central `_spacer` absorbs remaining container width (30%–45%), hugging the first two buttons to the left and pushing Est. Wait to the right.
+  3. Clicking the Status button expands Active sessions (`SESSION_ACTIVE_OPEN_KEY = True`); clicking Next in queue expands Reservation queue (`SESSION_QUEUE_OPEN_KEY = True`); both switch to Status View if invoked from Manage View.
+- **Consequences**:
+  - Complete hit area of each box is clickable without creating new browser tabs or requiring anchor tags.
+  - Est. wait stays right-anchored while Status and Next in queue hug their content.
+  - All automated tests pass (1,593 passing, 99.89% line coverage, 99.43% branch coverage). Zero `unsafe_allow_html`.
+
+
