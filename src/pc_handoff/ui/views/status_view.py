@@ -20,6 +20,7 @@ from pc_handoff.ui.view_model import (
     visibleNotices,
 )
 
+PAGE_TITLE = "PC Handoff"
 DISMISSED_KEY = "dismissedNotices"
 DISMISS_LABEL = "Dismiss"
 DISMISSED_TOP_NOTE_KEY = "dismissedTopNoteId"
@@ -89,9 +90,13 @@ def renderTopStatusNoteBanner(model: DashboardViewModel) -> None:
         )
 
 
-def renderViewModel(model: DashboardViewModel) -> None:
+def renderViewModel(model: DashboardViewModel, *, manager=None) -> None:
     with st.container(border=True):
-        renderBadge(model)
+        statusCol, queueCol, _spacer = st.columns([2, 2, 3], vertical_alignment="center")
+        with statusCol:
+            renderBadge(model)
+        with queueCol, st.container(border=True):
+            st.markdown(f"⏳ **{escapeMarkdown(model.nextInQueueText)}**")
         renderTopStatusNoteBanner(model)
         if model.unavailableBanner is not None:
             st.warning(escapeMarkdown(model.unavailableBanner))
@@ -126,8 +131,21 @@ def renderViewModel(model: DashboardViewModel) -> None:
 
     if model.handoffBanner is not None or model.reservationRows:
         with st.container(border=True):
+            bannerCol, actionCol = st.columns([4, 1], vertical_alignment="center")
             if model.handoffBanner is not None:
-                st.markdown(escapeMarkdown(model.handoffBanner))
+                with bannerCol:
+                    st.markdown(escapeMarkdown(model.handoffBanner))
+            if manager is not None:
+                with actionCol:
+                    for row in model.reservationRows:
+                        if row.canClaim:
+                            st.button(
+                                f"Claim Now ({row.user})",
+                                key=f"claim-{row.reservationId}",
+                                on_click=_handleQuickClaim,
+                                args=(manager, row.reservationId),
+                                use_container_width=True,
+                            )
             if model.reservationRows:
                 st.subheader(escapeMarkdown(model.reservationHeading), anchor=False)
                 st.dataframe(
@@ -143,15 +161,22 @@ def renderViewModel(model: DashboardViewModel) -> None:
                 st.markdown(escapeMarkdown(note.line))
 
     st.divider()
-    st.caption(escapeMarkdown(model.lastUpdatedLine))
-    st.caption(escapeMarkdown(model.footer))
+    if manager is not None:
+        st.caption(escapeMarkdown(MANAGE_INSTRUCTION_TEXT))
+    footerLeft, footerRight = st.columns([1, 1], vertical_alignment="center")
+    with footerLeft:
+        st.caption(escapeMarkdown(model.lastUpdatedLine))
+    with footerRight:
+        st.caption(escapeMarkdown(model.footer))
 
 
 def renderStatusView(runtime, model: DashboardViewModel) -> None:
     """Render the passive PC Status view and header navigation to ManageView."""
     manager = getattr(runtime, "reservationManager", None)
+    titleCol, navCol = st.columns([4, 1], vertical_alignment="center")
+    with titleCol:
+        st.title(PAGE_TITLE, anchor=False)
     if manager is not None:
-        _, navCol = st.columns([5, 1], vertical_alignment="center")
         with navCol:
             st.button(
                 NAV_TO_MANAGE_LABEL,
@@ -160,15 +185,4 @@ def renderStatusView(runtime, model: DashboardViewModel) -> None:
                 use_container_width=True,
             )
 
-    renderViewModel(model)
-
-    if manager is not None:
-        for row in model.reservationRows:
-            if row.canClaim:
-                st.button(
-                    f"Claim Now ({row.user})",
-                    key=f"claim-{row.reservationId}",
-                    on_click=_handleQuickClaim,
-                    args=(manager, row.reservationId),
-                )
-        st.caption(escapeMarkdown(MANAGE_INSTRUCTION_TEXT))
+    renderViewModel(model, manager=manager)

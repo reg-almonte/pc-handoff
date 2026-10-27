@@ -280,6 +280,7 @@ class DashboardViewModel:
     statusNotesHeading: str = STATUS_NOTES_HEADING
     statusNoteItems: tuple[StatusNoteItem, ...] = ()
     waitEstimateLine: str = DEFAULT_WAIT_ESTIMATE_LINE
+    nextInQueueText: str = "Next in queue: None"
 
 
 def buildViewModel(snapshot: DashboardSnapshot, now: datetime) -> DashboardViewModel:
@@ -323,6 +324,7 @@ def buildViewModel(snapshot: DashboardSnapshot, now: datetime) -> DashboardViewM
         statusNotesHeading=STATUS_NOTES_HEADING,
         statusNoteItems=noteItems,
         waitEstimateLine=waitEstimateText(snapshot.queueState, now),
+        nextInQueueText=nextInQueueLine(snapshot.queueState),
     )
 
 
@@ -504,6 +506,15 @@ def waitEstimateText(queueState: QueueState, now: datetime) -> str:
     return (
         f"Estimated start time: ~{formatTime(est.estimatedStartAt)} (Wait: ~{est.waitMinutes} min)"
     )
+
+
+def nextInQueueLine(queueState: QueueState) -> str:
+    """Build the compact 'Next in queue: <user|None>' summary for the top status strip."""
+    if queueState.readyReservation is not None:
+        return f"Next in queue: {displayOrUnknown(queueState.readyReservation.userName)}"
+    if queueState.queuedReservations:
+        return f"Next in queue: {displayOrUnknown(queueState.queuedReservations[0].userName)}"
+    return "Next in queue: None"
 
 
 def resolveRdpHost() -> str:

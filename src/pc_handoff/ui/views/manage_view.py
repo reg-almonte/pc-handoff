@@ -16,7 +16,12 @@ from pc_handoff.ui.view_model import (
     resolveRdpHost,
     sanitize,
 )
-from pc_handoff.ui.views.status_view import FEEDBACK_ERROR_KEY, renderBadge, table
+from pc_handoff.ui.views.status_view import (
+    FEEDBACK_ERROR_KEY,
+    PAGE_TITLE,
+    renderBadge,
+    table,
+)
 
 TAB_JOIN_QUEUE = "➕ Join Queue"
 TAB_READY_TO_HANDOFF = "🤝 Ready to Handoff"
@@ -87,7 +92,9 @@ def renderManageView(runtime, model: DashboardViewModel) -> None:
     manager = getattr(runtime, "reservationManager", None)
     if manager is None:
         return
-    _, navCol = st.columns([5, 1], vertical_alignment="center")
+    titleCol, navCol = st.columns([4, 1], vertical_alignment="center")
+    with titleCol:
+        st.title(PAGE_TITLE, anchor=False)
     with navCol:
         st.button(
             NAV_TO_STATUS_LABEL,
@@ -97,7 +104,11 @@ def renderManageView(runtime, model: DashboardViewModel) -> None:
         )
 
     with st.container(border=True):
-        renderBadge(model)
+        statusCol, queueCol, _spacer = st.columns([2, 2, 3], vertical_alignment="center")
+        with statusCol:
+            renderBadge(model)
+        with queueCol, st.container(border=True):
+            st.markdown(f"⏳ **{escapeMarkdown(model.nextInQueueText)}**")
 
     feedbackError = st.session_state.pop(FEEDBACK_ERROR_KEY, None)
     if feedbackError:
