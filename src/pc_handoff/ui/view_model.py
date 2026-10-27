@@ -20,10 +20,11 @@ markdown-rendering elements, ``escapeMarkdown`` (Security constraint).
 import os
 import string
 import unicodedata
-from collections.abc import Iterable
+from collections.abc import Iterable, Sequence
 from dataclasses import dataclass
 from datetime import datetime, timedelta, tzinfo
 
+from pc_handoff.detection.provider import ConnectionType
 from pc_handoff.domain.models import PcStatus, SessionState, TrackedSession
 from pc_handoff.domain.reservations import (
     HandoffState,
@@ -47,6 +48,7 @@ BADGE_KINDS = {
 }
 
 UNKNOWN_TEXT = "Unknown"
+NOT_APPLICABLE_TEXT = "N/A"
 UNKNOWN_DISCONNECTED_SINCE = "unknown"
 APPROX_SUFFIX = " (approx.)"
 UNAVAILABLE_BANNER = "Session information is currently unavailable"
@@ -299,7 +301,7 @@ def buildViewModel(snapshot: DashboardSnapshot, now: datetime) -> DashboardViewM
     lastUpdated = formatTime(now)
     dataUpdatedAt = formatTime(snapshot.updatedAt)
     return DashboardViewModel(
-        badgeText=snapshot.status.value,
+        badgeText=badgeTextFor(snapshot.status, activeRows),
         badgeKind=BADGE_KINDS.get(snapshot.status, BADGE_NEUTRAL),
         unavailableBanner=UNAVAILABLE_BANNER if unknown else None,
         lastKnownLine=lastKnownLine(snapshot) if unknown else None,
@@ -347,6 +349,14 @@ def activeHeading(unknown: bool, pollAt: datetime | None) -> str:
     return f"{LAST_KNOWN_HEADING} (as of {formatTime(pollAt)})"
 
 
+def badgeTextFor(status: PcStatus, activeRows: Sequence[ActiveRow]) -> str:
+    """Format the primary status badge text (includes ``user (ip)`` when ``In Use``)."""
+    if status is PcStatus.IN_USE:
+        users = ", ".join(f"{row.user} ({row.clientIp})" for row in activeRows)
+        return f"{status.value} — {users}"
+    return status.value
+
+
 def activeRow(session: TrackedSession, durationsAt: datetime | None) -> ActiveRow:
     period = session.openPeriod
     if period is None:  # defensive: an Active session always has an open period
@@ -360,11 +370,12 @@ def activeRow(session: TrackedSession, durationsAt: datetime | None) -> ActiveRo
             duration = formatDuration(elapsed)
             if period.durationApproximate:
                 duration += APPROX_SUFFIX
+    isConsole = session.connectionType is ConnectionType.CONSOLE
     return ActiveRow(
         user=displayOrUnknown(session.userName),
         connectionType=displayOrUnknown(session.connectionType.value),
-        clientName=displayOrUnknown(session.clientName),
-        clientIp=displayOrUnknown(session.clientAddress),
+        clientName=NOT_APPLICABLE_TEXT if isConsole else displayOrUnknown(session.clientName),
+        clientIp=NOT_APPLICABLE_TEXT if isConsole else displayOrUnknown(session.clientAddress),
         periodStart=periodStart,
         duration=duration,
     )

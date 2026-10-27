@@ -153,10 +153,13 @@ def test_ac12_recovery_after_an_outage_applies_the_blind_rule(app, case):
 
     doc = app.statusJson()
     expectedStatus = "Available" if case in ("gone",) or "disconnected" in case else "In Use"
+    expectedBadge = (
+        "Available" if expectedStatus == "Available" else "In Use — alice (192.168.1.20)"
+    )
     assert (doc["status"], doc["detectionHealthy"]) == (expectedStatus, True)
     assert doc["lastSuccessfulPollAt"] == iso(recoveredAt)
     page = app.render()
-    assert page.badge == expectedStatus and page.warnings == []  # the banner is gone
+    assert page.badge == expectedBadge and page.warnings == []  # the banner is gone
 
     newEvents = app.events()[len(eventsBefore) :]
     if case == "still-active":

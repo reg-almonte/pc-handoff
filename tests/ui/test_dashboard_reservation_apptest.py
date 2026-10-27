@@ -219,5 +219,13 @@ class TestDashboardReservationControls:
             is ReservationStatus.ACTIVE
         )
 
+        # Also verify timed-out handoff banner on StatusView when queue is empty
+        runtime.reservationManager.enqueueReservation("bob", 30)
+        runtime.pollOnce()  # alice (no OS session) completes; bob becomes READY
+        clock.advance(301)
+        runtime.pollOnce()  # bob's READY claim window expires -> TIMED_OUT with empty queue
+        app.run()
+        assert any("Handoff to bob timed out" in m for m in shown(app.markdown))
+
         # Also verify _handleQuickClaim error path records sanitized error
         _handleQuickClaim(FailingManager(), "r-bad")

@@ -1,4 +1,4 @@
-"""Main passive PC Status monitoring view (REQ-003, TASK-021)."""
+"""Main passive PC Status monitoring view (REQ-003, TASK-021, TASK-023)."""
 
 import pandas as pd
 import streamlit as st
@@ -72,7 +72,7 @@ def renderTopStatusNoteBanner(model: DashboardViewModel) -> None:
     topNote = model.statusNoteItems[0]
     if st.session_state.get(DISMISSED_TOP_NOTE_KEY) == topNote.noteId:
         return
-    bannerCol, closeCol = st.columns([11, 1])
+    bannerCol, closeCol = st.columns([11, 1], vertical_alignment="center")
     with bannerCol:
         bannerText = (
             f"📌 **Status Note [{escapeMarkdown(topNote.categoryLabel)}]** — "
@@ -90,34 +90,59 @@ def renderTopStatusNoteBanner(model: DashboardViewModel) -> None:
 
 
 def renderViewModel(model: DashboardViewModel) -> None:
-    renderBadge(model)
-    renderTopStatusNoteBanner(model)
-    if model.unavailableBanner is not None:
-        st.warning(escapeMarkdown(model.unavailableBanner))
-        st.warning(escapeMarkdown(model.lastKnownLine or ""))
-    for item in visibleNotices(model.noticeItems, st.session_state[DISMISSED_KEY]):
-        st.warning(escapeMarkdown(item.text))
-        st.button(DISMISS_LABEL, key=item.noticeId, on_click=dismissNotice, args=(item.noticeId,))
+    with st.container(border=True):
+        renderBadge(model)
+        renderTopStatusNoteBanner(model)
+        if model.unavailableBanner is not None:
+            st.warning(escapeMarkdown(model.unavailableBanner))
+            st.warning(escapeMarkdown(model.lastKnownLine or ""))
+        for item in visibleNotices(model.noticeItems, st.session_state[DISMISSED_KEY]):
+            st.warning(escapeMarkdown(item.text))
+            st.button(
+                DISMISS_LABEL,
+                key=item.noticeId,
+                on_click=dismissNotice,
+                args=(item.noticeId,),
+            )
 
-    st.subheader(escapeMarkdown(model.activeHeading), anchor=False)
-    if model.activeRows:
-        st.dataframe(table(model.activeRows, ACTIVE_COLUMNS), hide_index=True)
-    else:
-        st.text(model.emptyActiveMessage)
-    if model.disconnectedRows:
-        st.subheader(escapeMarkdown(model.disconnectedHeading), anchor=False)
-        st.dataframe(table(model.disconnectedRows, DISCONNECTED_COLUMNS), hide_index=True)
+    with st.container(border=True):
+        st.subheader(escapeMarkdown(model.activeHeading), anchor=False)
+        if model.activeRows:
+            st.dataframe(
+                table(model.activeRows, ACTIVE_COLUMNS),
+                hide_index=True,
+                use_container_width=True,
+            )
+        else:
+            st.text(model.emptyActiveMessage)
+        if model.disconnectedRows:
+            st.divider()
+            st.subheader(escapeMarkdown(model.disconnectedHeading), anchor=False)
+            st.dataframe(
+                table(model.disconnectedRows, DISCONNECTED_COLUMNS),
+                hide_index=True,
+                use_container_width=True,
+            )
 
-    if model.handoffBanner is not None:
-        st.markdown(escapeMarkdown(model.handoffBanner))
-    if model.reservationRows:
-        st.subheader(escapeMarkdown(model.reservationHeading), anchor=False)
-        st.dataframe(table(model.reservationRows, RESERVATION_COLUMNS), hide_index=True)
+    if model.handoffBanner is not None or model.reservationRows:
+        with st.container(border=True):
+            if model.handoffBanner is not None:
+                st.markdown(escapeMarkdown(model.handoffBanner))
+            if model.reservationRows:
+                st.subheader(escapeMarkdown(model.reservationHeading), anchor=False)
+                st.dataframe(
+                    table(model.reservationRows, RESERVATION_COLUMNS),
+                    hide_index=True,
+                    use_container_width=True,
+                )
+
     if model.statusNoteItems:
-        st.subheader(escapeMarkdown(model.statusNotesHeading), anchor=STATUS_NOTES_ANCHOR)
-        for note in model.statusNoteItems:
-            st.markdown(escapeMarkdown(note.line))
+        with st.container(border=True):
+            st.subheader(escapeMarkdown(model.statusNotesHeading), anchor=STATUS_NOTES_ANCHOR)
+            for note in model.statusNoteItems:
+                st.markdown(escapeMarkdown(note.line))
 
+    st.divider()
     st.caption(escapeMarkdown(model.lastUpdatedLine))
     st.caption(escapeMarkdown(model.footer))
 
@@ -126,7 +151,7 @@ def renderStatusView(runtime, model: DashboardViewModel) -> None:
     """Render the passive PC Status view and header navigation to ManageView."""
     manager = getattr(runtime, "reservationManager", None)
     if manager is not None:
-        _, navCol = st.columns([3, 1])
+        _, navCol = st.columns([5, 1], vertical_alignment="center")
         with navCol:
             st.button(
                 NAV_TO_MANAGE_LABEL,

@@ -124,7 +124,7 @@ def test_ac16_missing_data_files_are_created_with_defaults(
     names = sorted(p.name for p in dataDir.iterdir())
     assert names == ["activity_log.json", "config.json", "logs", "pc-handoff.lock", "status.json"]
     assert (dataDir / "logs" / "app.log").is_file()
-    assert page.badge == "In Use"
+    assert page.badge == "In Use — alice (192.168.1.20)"
     if variant == "partial-config":
         assert (dataDir / "config.json").read_bytes() == partial  # not missing, not corrupt
         assert (config.sessionPollIntervalSeconds, config.dashboardRefreshIntervalSeconds) == (
@@ -224,7 +224,7 @@ def test_ac17_corrupt_status_json_is_backed_up_and_periods_rebuilt_from_the_log(
 
     notice = f"Status data was reset (backup: status.json.corrupt-{STAMP_T0})"
     page = app.render()
-    assert notice in page.warnings and page.badge == "In Use"
+    assert notice in page.warnings and page.badge == "In Use — alice (192.168.1.20)"
     assert app.tick() == POLL_OK  # it keeps running
     app.restart()
     app.tick()
@@ -392,7 +392,7 @@ def test_ac20_changes_during_downtime_are_reconciled_under_the_blind_rule(app, d
         ("detected_at_startup", iso(carolConnect))
     ]
     page = app.render()
-    assert page.badge == "In Use"
+    assert page.badge == "In Use — carol (192.168.1.20)"
     assert [r[0] for r in page.activeRows] == ["carol"]
     assert [r[0] for r in page.disconnectedRows] == ["dave"]
 

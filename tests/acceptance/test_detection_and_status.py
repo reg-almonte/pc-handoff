@@ -77,7 +77,7 @@ def test_ac01_active_rdp_session_is_shown_in_use(app):
     app.clock.advance(65)  # the dashboard is opened a little after the poll
 
     page = app.render()
-    assert (page.badge, page.badgeKind) == ("In Use", "error")
+    assert (page.badge, page.badgeKind) == ("In Use — alice (192.168.1.20)", "error")
     assert page.subheaders == ["Active sessions"]
     # Duration = now - connect time, exactly (the AC allows +-(refresh + 2) s).
     expected = (app.now() - C1).total_seconds()
@@ -276,7 +276,7 @@ def test_ac06_reconnect_starts_a_new_usage_period(app, transitional):
 
     app.clock.advance(30)
     page = app.render()
-    assert page.badge == "In Use"
+    assert page.badge == "In Use — alice (192.168.1.30)"
     row = page.activeRow("alice")
     assert row[2:4] == ["ALICE-DESKTOP", "192.168.1.30"]
     assert row[4:] == [local(connectB), hms((app.now() - connectB).total_seconds())]
@@ -303,7 +303,7 @@ def test_ac07_in_use_needs_an_active_session_among_several(app):
         app.tick()
 
     page = app.render()
-    assert page.badge == "In Use"
+    assert page.badge == "In Use — alice (192.168.1.20)"
     duration = hms((app.now() - C1).total_seconds())
     assert page.activeRows == [
         ["alice", "RDP", "ALICE-LAPTOP", "192.168.1.20", local(C1), duration]
@@ -328,7 +328,7 @@ def test_ac08_status_does_not_flap_between_several_active_sessions(app):
     aliceOff = alice("Disconnected", connectTime=connectA, disconnectTime=disconnectA)
     changeBeforeNextPoll(app, 1, aliceOff, bob(connectTime=connectB))
     statuses.append(statusOf(app))
-    assert app.render().badge == "In Use"
+    assert app.render().badge == "In Use — bob (192.168.1.21)"
     for _ in range(2):  # bob logs off two or more poll cycles later
         app.tick()
         statuses.append(statusOf(app))
@@ -372,12 +372,17 @@ def test_ac22_logoff_of_a_disconnected_session_writes_no_event(app, variant):
         changeBeforeNextPoll(app, 1, *others)
 
     expectedStatus = "Available" if variant == "logged-off" else "In Use"
+    expectedBadge = {
+        "logged-off": "Available",
+        "others-active": "In Use — bob (192.168.1.21)",
+        "taken-over": "In Use — bob (192.168.1.20)",
+    }[variant]
     doc = app.statusJson()
     assert "alice" not in [s["userName"] for s in doc["sessions"]]
     assert doc["status"] == expectedStatus
     page = app.render()
     assert page.disconnectedRows == []
-    assert page.badge == expectedStatus
+    assert page.badge == expectedBadge
     assert app.events()[: len(eventsBefore)] == eventsBefore
     newEvents = app.events()[len(eventsBefore) :]
     assert not [e for e in newEvents if e["userName"] == "alice"]
@@ -440,7 +445,7 @@ def test_ac23_disconnect_and_reconnect_within_one_poll_is_detected(app, osDiscon
 
     app.clock.advance(20)
     page = app.render()
-    assert page.badge == "In Use"
+    assert page.badge == "In Use — alice (192.168.1.20)"
     elapsed = hms((app.now() - connectB).total_seconds())
     assert page.activeRow("alice")[4:] == [local(connectB), elapsed]
 
@@ -501,8 +506,8 @@ def test_ac25_an_active_console_logon_shows_in_use_with_type_console(app):
     ]
     assert (entry["clientName"], entry["clientAddress"]) == (None, None)
     page = app.render()
-    assert page.badge == "In Use"
-    assert page.activeRow("erin")[:4] == ["erin", CONSOLE, "Unknown", "Unknown"]
+    assert page.badge == "In Use — erin (N/A)"
+    assert page.activeRow("erin")[:4] == ["erin", CONSOLE, "N/A", "N/A"]
     [start] = app.events()
     assert (start["eventType"], start["connectionType"], start["reason"]) == (
         "session_start",

@@ -181,7 +181,7 @@ section 6. Each "within 7 s" means `sessionPollIntervalSeconds` + 2 s with the d
 4. **Console sign-in (AC-25).** With nobody connected, erin signs in at the PC's own
    keyboard.
    - **Expected:**
-     - `In Use`, with a row for erin showing `Console`, `Unknown`, `Unknown`.
+     - `In Use — erin (N/A)`, with a row for erin showing `Console`, `N/A`, `N/A`.
      - In `status.json`, `connectionType: "Console"` with null client fields.
      - One `session_start` with `connectionType: "Console"`.
    - Then erin signs out (see M8).

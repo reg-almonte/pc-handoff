@@ -118,7 +118,7 @@ def test_ac14_dashboard_refresh_interval_is_the_startup_value_by_composition(
 
         # (2) the fragment's next run shows the change, and "Last updated" has advanced.
         page = app.rerender()
-        assert page.badge == "In Use" and page.activeRows[0][0] == "bob"
+        assert page.badge == "In Use — bob (192.168.1.20)" and page.activeRows[0][0] == "bob"
         assert page.lastUpdated != firstUpdated
         assert fragmentSpy == [REFRESH_SECONDS, REFRESH_SECONDS]
 
