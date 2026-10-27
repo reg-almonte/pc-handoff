@@ -57,3 +57,16 @@ This ledger records architectural decisions, assumptions, and trade-offs for **P
   - Uncluttered main status view ideal for passive dashboards and wallboards.
   - Immediate alerts for users sitting at the physical host PC when a remote queue request arrives.
   - Maintains zero external pip/cloud dependencies and offline-first compliance.
+
+---
+
+## DEC-012: Highlighted Top Status Note Banner & Self-Registering Windows Toast AUMID (`v0.3.1`)
+- **Date**: 2026-10-27
+- **Context**: Local verification of `v0.3.0` identified three UX and notification refinements:
+  1. The legacy bottom checkbox ("Manage reservations & status notes") duplicated the upper-right header navigation button; an explicit instruction pointing users to the upper-right button is cleaner.
+  2. Active broadcast Status Notes needed a highlighted banner at the top of the Status View (normal font size) that jumps to `#status-notes` when clicked and can be temporarily closed until the browser page is refreshed (`F5`) or a new note is posted.
+  3. On Windows 10/11, `ToastNotificationManager::CreateToastNotifier('PC.Handoff')` silently drops toast notifications (returning exit code `0`) unless `'PC.Handoff'` is registered under `HKCU:\Software\Classes\AppUserModelId\PC.Handoff`.
+- **Decision**:
+  1. Removed the legacy `showReservationControls` checkbox and replaced it on `StatusView` with an instruction directing users to **⚙️ Manage Queue & Notes** at the upper right.
+  2. Added `renderTopStatusNoteBanner` in `status_view.py` rendering the top active `StatusNoteItem` as a highlighted `st.info` banner with an anchor link to `#status-notes` and a temporary `✕` close button (`st.session_state["dismissedTopNoteId"]`).
+  3. Updated `buildToastCommand` in `windows_notifier.py` to ensure `HKCU:\Software\Classes\AppUserModelId\PC.Handoff` (`DisplayName = 'PC Handoff'`) exists before calling `CreateToastNotifier`, with automatic fallback to Windows PowerShell's built-in AUMID.

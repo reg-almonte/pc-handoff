@@ -61,7 +61,7 @@ class TestHandoffAcceptance:
         registry.registerRuntime(runtime)
 
         app = AppTest.from_file(SCRIPT, default_timeout=TIMEOUT).run()
-        app.checkbox(key="showReservationControls").check().run()
+        app.button(key="nav_to_manage").click().run()
 
         # 1. Bob joins the queue via the UI while Alice is using the PC
         app.text_input(key="joinUserName").set_value("bob")

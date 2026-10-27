@@ -6,7 +6,6 @@ from typing import Any
 VIEW_STATE_KEY = "current_view"
 VIEW_STATUS = "status"
 VIEW_MANAGE = "manage"
-LEGACY_CONTROLS_KEY = "showReservationControls"
 
 NAV_TO_MANAGE_KEY = "nav_to_manage"
 NAV_TO_MANAGE_LABEL = "⚙️ Manage Queue & Notes"
@@ -20,10 +19,7 @@ class NavigationController:
     @staticmethod
     def currentView(sessionState: MutableMapping[str, Any]) -> str:
         """Return ``'manage'`` or ``'status'`` for the active browser session."""
-        if sessionState.get(VIEW_STATE_KEY) == VIEW_MANAGE or bool(
-            sessionState.get(LEGACY_CONTROLS_KEY, False)
-        ):
-            sessionState[VIEW_STATE_KEY] = VIEW_MANAGE
+        if sessionState.get(VIEW_STATE_KEY) == VIEW_MANAGE:
             return VIEW_MANAGE
         return VIEW_STATUS
 
@@ -36,4 +32,3 @@ class NavigationController:
     def goToStatus(sessionState: MutableMapping[str, Any]) -> None:
         """Switch the browser session back to the main PC Status view."""
         sessionState[VIEW_STATE_KEY] = VIEW_STATUS
-        sessionState[LEGACY_CONTROLS_KEY] = False

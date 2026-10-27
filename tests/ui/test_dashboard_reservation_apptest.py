@@ -14,12 +14,12 @@ from pc_handoff.runtime.state_store import DashboardSnapshot
 from pc_handoff.ui.navigation import NAV_TO_MANAGE_KEY, NAV_TO_STATUS_KEY
 from pc_handoff.ui.view_model import RESERVATION_COLUMNS, buildViewModel
 from pc_handoff.ui.views.manage_view import renderManageView
+from pc_handoff.ui.views.status_view import CLOSE_TOP_NOTE_KEY, MANAGE_INSTRUCTION_TEXT
 from tests.conftest import FAKE_CLOCK_START
 from tests.fakes import FakeClock, FakeSessionProvider
 from tests.fakes.builders import osSession, trackerState
 
 SCRIPT = str(launcher.DASHBOARD_SCRIPT)
-RESERVATION_CONTROLS_KEY = "showReservationControls"
 T0 = FAKE_CLOCK_START
 TIMEOUT = 30
 
@@ -51,6 +51,8 @@ class TestDashboardReservationControls:
 
         app = AppTest.from_file(SCRIPT, default_timeout=TIMEOUT).run()
         assert not app.exception
+        assert not app.checkbox
+        assert any(MANAGE_INSTRUCTION_TEXT in c for c in shown(app.caption))
 
         # Enable self-service reservation controls via header navigation button
         app.button(key=NAV_TO_MANAGE_KEY).click().run()
@@ -134,7 +136,7 @@ class TestDashboardReservationControls:
         registry.registerRuntime(runtime)
 
         app = AppTest.from_file(SCRIPT, default_timeout=TIMEOUT).run()
-        app.checkbox(key=RESERVATION_CONTROLS_KEY).check().run()
+        app.button(key=NAV_TO_MANAGE_KEY).click().run()
 
         app.text_input(key="noteUserName").set_value("alice")
         app.text_input(key="noteMessage").set_value("Running **benchmark** <script>x</script>")
@@ -150,9 +152,25 @@ class TestDashboardReservationControls:
         [note] = runtime.reservationManager.currentState().statusNotes
         assert note.category is NoteCategory.URGENT
 
-        # Verify status note also renders on StatusView, then return to ManageView to clear
+        # Verify top Status Note highlighted banner on StatusView, close button, and refresh return
         app.button(key=NAV_TO_STATUS_KEY).click().run()
         assert "Status notes" in shown(app.subheader)
+        assert any(
+            "Status Note [Urgent / Do Not Interrupt]" in i and "#status-notes" in i
+            for i in shown(app.info)
+        )
+
+        # Close the top Status Note banner temporarily; stays closed across reruns
+        app.button(key=CLOSE_TOP_NOTE_KEY).click().run()
+        assert not app.exception
+        assert not any("Status Note [" in i for i in shown(app.info))
+        app.run()
+        assert not any("Status Note [" in i for i in shown(app.info))
+
+        # A fresh page refresh (new browser session) brings the top Status Note banner back
+        refreshed = AppTest.from_file(SCRIPT, default_timeout=TIMEOUT).run()
+        assert any("Status Note [Urgent / Do Not Interrupt]" in i for i in shown(refreshed.info))
+
         app.button(key=NAV_TO_MANAGE_KEY).click().run()
 
         # Clear the status note

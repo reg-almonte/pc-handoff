@@ -16,9 +16,7 @@ from pc_handoff.domain.reservations import (
 )
 from pc_handoff.runtime.state_store import DashboardSnapshot
 from pc_handoff.ui.navigation import (
-    LEGACY_CONTROLS_KEY,
     VIEW_MANAGE,
-    VIEW_STATE_KEY,
     VIEW_STATUS,
     NavigationController,
 )
@@ -201,11 +199,4 @@ class TestReservationViewModel:
         NavigationController.goToManage(sessionState)
         assert NavigationController.currentView(sessionState) == VIEW_MANAGE
         NavigationController.goToStatus(sessionState)
-        assert NavigationController.currentView(sessionState) == VIEW_STATUS
-
-        sessionState[LEGACY_CONTROLS_KEY] = True
-        assert NavigationController.currentView(sessionState) == VIEW_MANAGE
-        assert sessionState[VIEW_STATE_KEY] == VIEW_MANAGE
-        NavigationController.goToStatus(sessionState)
-        assert sessionState[LEGACY_CONTROLS_KEY] is False
         assert NavigationController.currentView(sessionState) == VIEW_STATUS

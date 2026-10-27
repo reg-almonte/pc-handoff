@@ -287,7 +287,7 @@ section 6. Each "within 7 s" means `sessionPollIntervalSeconds` + 2 s with the d
   session correlation, and broadcast status notes (`SD001`, `DEC-010`).
 - **Steps:**
   1. While alice is connected over RDP (`In Use`), open the dashboard on bob's LAN machine,
-     check **Manage reservations & status notes**, and join the queue as `bob` (duration `60`
+     click **⚙️ Manage Queue & Notes**, and join the queue as `bob` (duration `60`
      min, notes `Integration test`).
   2. Have alice post a status note (`Wrapping up in 5 minutes`) and then click **Ready to
      Handoff** (`offeredByUserName`: `alice`).
