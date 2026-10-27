@@ -4,7 +4,6 @@ import pandas as pd
 import streamlit as st
 
 from pc_handoff.ui.navigation import (
-    LEGACY_CONTROLS_KEY,
     NAV_TO_MANAGE_KEY,
     NAV_TO_MANAGE_LABEL,
     NavigationController,
@@ -23,13 +22,25 @@ from pc_handoff.ui.view_model import (
 
 DISMISSED_KEY = "dismissedNotices"
 DISMISS_LABEL = "Dismiss"
-RESERVATION_CONTROLS_LABEL = "Manage reservations & status notes"
+DISMISSED_TOP_NOTE_KEY = "dismissedTopNoteId"
+CLOSE_TOP_NOTE_KEY = "closeTopStatusNoteBtn"
+CLOSE_TOP_NOTE_LABEL = "✕"
+STATUS_NOTES_ANCHOR = "status-notes"
+MANAGE_INSTRUCTION_TEXT = (
+    "To join the queue, offer a handoff, or post a status note, "
+    "use the ⚙️ Manage Queue & Notes button at the upper right."
+)
 FEEDBACK_ERROR_KEY = "reservationFeedbackError"
 
 
 def dismissNotice(noticeId: str) -> None:
     """Button callback: hide one notice for this browser session only."""
     st.session_state[DISMISSED_KEY].add(noticeId)
+
+
+def dismissTopStatusNote(noteId: str) -> None:
+    """Button callback: temporarily close the top status-note banner until page refresh."""
+    st.session_state[DISMISSED_TOP_NOTE_KEY] = noteId
 
 
 def _handleQuickClaim(manager, reservationId: str) -> None:
@@ -54,8 +65,33 @@ def renderBadge(model: DashboardViewModel) -> None:
         st.info(text)
 
 
+def renderTopStatusNoteBanner(model: DashboardViewModel) -> None:
+    """Render the top active Status Note as a highlighted banner with jump link and close button."""
+    if not model.statusNoteItems:
+        return
+    topNote = model.statusNoteItems[0]
+    if st.session_state.get(DISMISSED_TOP_NOTE_KEY) == topNote.noteId:
+        return
+    bannerCol, closeCol = st.columns([11, 1])
+    with bannerCol:
+        bannerText = (
+            f"📌 **Status Note [{escapeMarkdown(topNote.categoryLabel)}]** — "
+            f"**{escapeMarkdown(topNote.user)}**: {escapeMarkdown(topNote.message)} "
+            f"([Jump to Status notes ↓](#{STATUS_NOTES_ANCHOR}))"
+        )
+        st.info(bannerText)
+    with closeCol:
+        st.button(
+            CLOSE_TOP_NOTE_LABEL,
+            key=CLOSE_TOP_NOTE_KEY,
+            on_click=dismissTopStatusNote,
+            args=(topNote.noteId,),
+        )
+
+
 def renderViewModel(model: DashboardViewModel) -> None:
     renderBadge(model)
+    renderTopStatusNoteBanner(model)
     if model.unavailableBanner is not None:
         st.warning(escapeMarkdown(model.unavailableBanner))
         st.warning(escapeMarkdown(model.lastKnownLine or ""))
@@ -78,7 +114,7 @@ def renderViewModel(model: DashboardViewModel) -> None:
         st.subheader(escapeMarkdown(model.reservationHeading), anchor=False)
         st.dataframe(table(model.reservationRows, RESERVATION_COLUMNS), hide_index=True)
     if model.statusNoteItems:
-        st.subheader(escapeMarkdown(model.statusNotesHeading), anchor=False)
+        st.subheader(escapeMarkdown(model.statusNotesHeading), anchor=STATUS_NOTES_ANCHOR)
         for note in model.statusNoteItems:
             st.markdown(escapeMarkdown(note.line))
 
@@ -110,4 +146,4 @@ def renderStatusView(runtime, model: DashboardViewModel) -> None:
                     on_click=_handleQuickClaim,
                     args=(manager, row.reservationId),
                 )
-        st.checkbox(RESERVATION_CONTROLS_LABEL, key=LEGACY_CONTROLS_KEY)
+        st.caption(escapeMarkdown(MANAGE_INSTRUCTION_TEXT))

@@ -37,6 +37,9 @@ from pc_handoff.persistence.config_store import (
 )
 
 APP_ID = "PC.Handoff"
+POWERSHELL_FALLBACK_APP_ID = (
+    r"{1AC14E77-02E7-4E5D-B744-2EB1AE5198B7}\WindowsPowerShell\v1.0\powershell.exe"
+)
 _STDLIB_SUBPROCESS_RUN = subprocess.run
 
 
@@ -53,10 +56,24 @@ def _psSingleQuote(text: str) -> str:
 
 
 def buildToastCommand(title: str, body: str) -> list[str]:
-    """Build the PowerShell command line for a native WinRT Toast notification."""
+    """Build the PowerShell command line for a native WinRT Toast notification.
+
+    Ensures ``HKCU:\\Software\\Classes\\AppUserModelId\\PC.Handoff`` is registered for the
+    current user (zero elevation required) before invoking ``CreateToastNotifier``, falling
+    back to Windows PowerShell's built-in AUMID if the user registry hive is inaccessible.
+    """
     safeTitle = _psSingleQuote(xmlEscape(sanitizeNotificationText(title)))
     safeBody = _psSingleQuote(xmlEscape(sanitizeNotificationText(body)))
     script = (
+        f"$appId = '{APP_ID}'; "
+        "try { "
+        f"$regPath = 'HKCU:\\Software\\Classes\\AppUserModelId\\{APP_ID}'; "
+        "if (-not (Test-Path $regPath)) { New-Item -Path $regPath -Force | Out-Null }; "
+        "New-ItemProperty -Path $regPath -Name 'DisplayName' -Value 'PC Handoff' "
+        "-PropertyType String -Force | Out-Null "
+        "} catch { "
+        f"$appId = '{POWERSHELL_FALLBACK_APP_ID}' "
+        "}; "
         "[Windows.UI.Notifications.ToastNotificationManager, Windows.UI.Notifications, "
         "ContentType = WindowsRuntime] > $null; "
         "[Windows.Data.Xml.Dom.XmlDocument, Windows.Data.Xml.Dom.XmlDocument, "
@@ -66,7 +83,7 @@ def buildToastCommand(title: str, body: str) -> list[str]:
         f"<text>{safeTitle}</text><text>{safeBody}</text>"
         f"</binding></visual></toast>'); "
         "$toast = [Windows.UI.Notifications.ToastNotification]::new($xml); "
-        f"[Windows.UI.Notifications.ToastNotificationManager]::CreateToastNotifier('{APP_ID}')"
+        "[Windows.UI.Notifications.ToastNotificationManager]::CreateToastNotifier($appId)"
         ".Show($toast)"
     )
     return [

@@ -142,6 +142,8 @@ def test_build_toast_and_msg_commands_escape_special_characters() -> None:
     script = toastCmd[-1]
     assert "PC''s &lt;Title&gt;" in script
     assert "Bob &amp; ''Alice'' &gt; 5m" in script
+    assert "HKCU:\\Software\\Classes\\AppUserModelId\\PC.Handoff" in script
+    assert "WindowsPowerShell\\v1.0\\powershell.exe" in script
 
     msgCmd = buildMsgCommand("Title\nLine", "Body\tText", timeoutSeconds=12)
     assert msgCmd == ["msg.exe", "*", "/time:12", "Title Line - Body Text"]

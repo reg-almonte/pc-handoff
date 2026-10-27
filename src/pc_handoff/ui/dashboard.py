@@ -1,4 +1,4 @@
-"""The PC Handoff status dashboard (TASK-010, TASK-021, ADR-008, DEC-011).
+"""The PC Handoff status dashboard (TASK-010, TASK-021, ADR-008, DEC-011, DEC-012).
 
 Streamlit runs this file as a script. The page reads the runtime registered by the launcher
 and routes between the passive Status View and the dedicated Manage View using
@@ -12,7 +12,6 @@ import streamlit as st
 from pc_handoff.app_logging import LOGGER_NAME, newTraceId, traceScope
 from pc_handoff.runtime.registry import getRuntime
 from pc_handoff.ui.navigation import (
-    LEGACY_CONTROLS_KEY,
     VIEW_MANAGE,
     NavigationController,
 )
@@ -23,11 +22,14 @@ from pc_handoff.ui.view_model import (
 )
 from pc_handoff.ui.views.manage_view import renderManageView
 from pc_handoff.ui.views.status_view import (
+    CLOSE_TOP_NOTE_KEY,
     DISMISS_LABEL,
     DISMISSED_KEY,
+    DISMISSED_TOP_NOTE_KEY,
     FEEDBACK_ERROR_KEY,
-    RESERVATION_CONTROLS_LABEL,
+    MANAGE_INSTRUCTION_TEXT,
     dismissNotice,
+    dismissTopStatusNote,
     renderBadge,
     renderStatusView,
     renderViewModel,
@@ -37,18 +39,19 @@ from pc_handoff.ui.views.status_view import (
 PAGE_TITLE = "PC Handoff"
 NOT_STARTED_MESSAGE = "Start PC Handoff with: python -m pc_handoff"
 WAITING_MESSAGE = "Waiting for the first status update."
-RESERVATION_CONTROLS_KEY = LEGACY_CONTROLS_KEY
 
 __all__ = [
+    "CLOSE_TOP_NOTE_KEY",
     "DISMISSED_KEY",
+    "DISMISSED_TOP_NOTE_KEY",
     "DISMISS_LABEL",
     "FEEDBACK_ERROR_KEY",
+    "MANAGE_INSTRUCTION_TEXT",
     "NOT_STARTED_MESSAGE",
     "PAGE_TITLE",
-    "RESERVATION_CONTROLS_KEY",
-    "RESERVATION_CONTROLS_LABEL",
     "WAITING_MESSAGE",
     "dismissNotice",
+    "dismissTopStatusNote",
     "renderBadge",
     "renderViewModel",
     "table",

@@ -126,11 +126,15 @@ class TestManageViewAcceptance:
         rdpContent = generateRdpFileContent("LAB-SHARED-01", 3389)
         assert "full address:s:LAB-SHARED-01:3389\n" in rdpContent
 
-        # 8. Navigate back to Status View and verify passive monitoring state
+        # 8. Navigate back to Status View and verify passive monitoring state & top note banner
         app.button(key=NAV_TO_STATUS_KEY).click().run()
         assert not app.exception
         assert not app.text_input
+        assert not app.checkbox
         assert any("[Maintenance]" in m for m in shown(app.markdown))
+        assert any(
+            "Status Note [Maintenance]" in i and "#status-notes" in i for i in shown(app.info)
+        )
 
         # 9. Validate persisted JSON files against schemas
         actDoc = readJson(dataDir / "activity_log.json")
