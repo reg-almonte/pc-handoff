@@ -154,20 +154,16 @@ class Page:
 
 def pageFrom(at: AppTest) -> Page:
     assert not at.exception, [e.value for e in at.exception]
-    badgeButtons = [
-        ("error", b.label)
-        for b in at.button
-        if b.key == "statusInUseBadgeBtn" or "In Use" in b.label
-    ]
     rawBadges = [
         (kind, unescape(element.value))
         for kind, elements in (("success", at.success), ("error", at.error), ("info", at.info))
         for element in elements
-    ] + badgeButtons
+    ]
     badges = [
         (kind, re.sub(r"^[🔴🟢]\s*", "", re.sub(r"\[(.*?)\]\(.*?\)", r"\1", text)))
         for kind, text in rawBadges
         if not text.startswith(("Dashboard error", "Start PC Handoff"))
+        and not re.search(r"Next in queue|Est\. wait", text)
     ]
     assert len(badges) == 1, (badges, rawBadges)
     (badgeKind, badge), activeRows, disconnectedRows = badges[0], [], []

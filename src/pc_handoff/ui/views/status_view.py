@@ -26,8 +26,6 @@ DISMISS_LABEL = "Dismiss"
 DISMISSED_TOP_NOTE_KEY = "dismissedTopNoteId"
 CLOSE_TOP_NOTE_KEY = "closeTopStatusNoteBtn"
 CLOSE_TOP_NOTE_LABEL = "✕"
-STATUS_IN_USE_BTN_KEY = "statusInUseBadgeBtn"
-STATUS_QUEUE_BTN_KEY = "statusQueueBadgeBtn"
 STATUS_NOTES_ANCHOR = "status-notes"
 ACTIVE_SESSIONS_ANCHOR = "active-sessions"
 RESERVATION_QUEUE_ANCHOR = "reservation-queue"
@@ -66,27 +64,18 @@ def table(rows, columns) -> pd.DataFrame:
     return pd.DataFrame([row.cells() for row in rows], columns=list(columns), dtype="string")
 
 
-def _onInUseBadgeClick() -> None:
-    st.session_state[SESSION_ACTIVE_OPEN_KEY] = True
-
-
-def _onQueueBadgeClick() -> None:
-    st.session_state[SESSION_QUEUE_OPEN_KEY] = True
-
-
 def renderBadge(model: DashboardViewModel) -> None:
-    if model.badgeKind == BADGE_ERROR:
-        st.button(
-            model.badgeText,
-            key=STATUS_IN_USE_BTN_KEY,
-            on_click=_onInUseBadgeClick,
-            use_container_width=True,
-            help="Click to expand Active sessions",
-        )
-    elif model.badgeKind == BADGE_SUCCESS:
-        st.success(model.badgeText)
+    if model.badgeLink:
+        text = f"[{escapeMarkdown(model.badgeText)}]({model.badgeLink})"
     else:
-        st.info(model.badgeText)
+        text = escapeMarkdown(model.badgeText)
+
+    if model.badgeKind == BADGE_ERROR:
+        st.error(text)
+    elif model.badgeKind == BADGE_SUCCESS:
+        st.success(text)
+    else:
+        st.info(text)
 
 
 def renderTopStatusNoteBanner(model: DashboardViewModel) -> None:
@@ -179,25 +168,21 @@ def renderViewModel(model: DashboardViewModel, *, manager=None) -> None:
         st.session_state[SESSION_NOTES_OPEN_KEY] = True
 
     with st.container(border=True):
-        statusCol, queueCol, _spacer, waitCol = st.columns(
-            [3.2, 3.0, 0.4, 3.4], vertical_alignment="center"
+        statusCol, queueCol, waitCol, _spacer = st.columns(
+            list(model.statusRowWeights), vertical_alignment="center"
         )
         with statusCol:
             renderBadge(model)
         with queueCol:
-            if model.nextInQueueUser:
-                st.button(
-                    f"⏳ {model.nextInQueueText}",
-                    key=STATUS_QUEUE_BTN_KEY,
-                    on_click=_onQueueBadgeClick,
-                    use_container_width=True,
-                    help="Click to expand Reservation queue",
+            if model.nextInQueueLink:
+                suffix = model.nextInQueueText.removeprefix("Next in queue: ")
+                st.info(
+                    f"⏳ **Next in queue:** [{escapeMarkdown(suffix)}]({model.nextInQueueLink})"
                 )
             else:
-                with st.container(border=True):
-                    st.markdown(f"⏳ **{escapeMarkdown(model.nextInQueueText)}**")
-        with waitCol, st.container(border=True):
-            st.markdown(f"🕒 **{escapeMarkdown(model.compactWaitText)}**")
+                st.info(f"⏳ **{escapeMarkdown(model.nextInQueueText)}**")
+        with waitCol:
+            st.info(f"🕒 **{escapeMarkdown(model.compactWaitText)}**")
         renderTopStatusNoteBanner(model)
         if model.unavailableBanner is not None:
             st.warning(escapeMarkdown(model.unavailableBanner))

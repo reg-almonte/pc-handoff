@@ -150,10 +150,7 @@ def test_before_the_first_publish_the_page_waits():
 def test_ac1_in_use_with_full_session_details_and_a_live_duration():
     app = run(StubRuntime(healthySnapshot([alice()], C), C + timedelta(seconds=3725)))
     assert shown(app.success) == []
-    assert [b.label for b in app.button if b.key == "statusInUseBadgeBtn"] == [
-        "🔴 In Use — alice (192.168.1.20)"
-    ]
-    assert not app.error
+    assert shown(app.error) == ["[🔴 In Use — alice (192.168.1.20)](#active-sessions)"]
     assert shown(app.subheader) == ["Active sessions"]
     assert list(app.dataframe[0].value.columns) == list(ACTIVE_COLUMNS)
     assert rows(app) == [["alice", "RDP", "ALICE-LAPTOP", "192.168.1.20", local(C), "01:02:05"]]
@@ -196,10 +193,7 @@ def test_ac3_variant_carol_active_shows_in_use_and_only_carol_as_active():
         carol,
     ]
     app = run(StubRuntime(healthySnapshot(sessions, d), d))
-    assert [b.label for b in app.button if b.key == "statusInUseBadgeBtn"] == [
-        "🔴 In Use — carol (192.168.1.20)"
-    ]
-    assert not app.error
+    assert shown(app.error) == ["[🔴 In Use — carol (192.168.1.20)](#active-sessions)"]
     assert [r[0] for r in rows(app, 0)] == ["carol"]
     assert [r[0] for r in rows(app, 1)] == ["alice", "bob"]
     assert not app.text
@@ -245,7 +239,7 @@ def unknownRuntime() -> StubRuntime:
 def test_ac5_unknown_shows_banner_last_known_status_and_frozen_durations():
     runtime = unknownRuntime()
     app = run(runtime)
-    assert shown(app.info) == ["Unknown"]
+    assert shown(app.info)[0] == "Unknown"
     assert shown(app.warning) == [
         "Session information is currently unavailable",
         f"Last known status: In Use at {local(P)}",
@@ -260,7 +254,7 @@ def test_ac5_unknown_shows_banner_last_known_status_and_frozen_durations():
 
 def test_ac6_fresh_install_unknown_shows_last_known_status_none():
     app = run(StubRuntime(unknownSnapshot([], None, failedAt=C), C))
-    assert shown(app.info) == ["Unknown"]
+    assert shown(app.info)[0] == "Unknown"
     assert shown(app.warning) == [
         "Session information is currently unavailable",
         "Last known status: none",
@@ -276,10 +270,7 @@ def test_ac7_recovery_removes_the_banner_on_the_next_refresh():
     runtime.stateStore.publish(healthySnapshot([alice()], P + timedelta(seconds=600)))
     app.run()
     assert not app.warning
-    assert [b.label for b in app.button if b.key == "statusInUseBadgeBtn"] == [
-        "🔴 In Use — alice (192.168.1.20)"
-    ]
-    assert not app.error
+    assert shown(app.error) == ["[🔴 In Use — alice (192.168.1.20)](#active-sessions)"]
     assert shown(app.subheader) == ["Active sessions"]
     assert rows(app)[0][5] == "01:12:03"
 
@@ -488,9 +479,7 @@ def test_the_page_reads_only_config_clock_and_the_snapshot():
     # raises, which the page would report as a dashboard error.
     app = run(StubRuntime(healthySnapshot([alice()], C), C))
     assert not [e for e in app.error if "Dashboard error" in e.value]
-    assert [b.label for b in app.button if b.key == "statusInUseBadgeBtn"] == [
-        "🔴 In Use — alice (192.168.1.20)"
-    ]
+    assert shown(app.error) == ["[🔴 In Use — alice (192.168.1.20)](#active-sessions)"]
 
 
 def test_rendering_never_triggers_or_waits_for_a_poll(tmp_path):
@@ -513,9 +502,7 @@ def test_rendering_never_triggers_or_waits_for_a_poll(tmp_path):
         app = run(runtime)
         app.run()
         elapsed = time.monotonic() - started
-        assert [b.label for b in app.button if b.key == "statusInUseBadgeBtn"] == [
-            "🔴 In Use — alice (192.168.1.20)"
-        ]
+        assert shown(app.error) == ["[🔴 In Use — alice (192.168.1.20)](#active-sessions)"]
         assert rows(app)[0][0] == "alice"
         assert provider.callCount == 2  # the page started no poll of its own
         assert elapsed < 3, elapsed
@@ -530,16 +517,14 @@ def test_the_real_runtime_renders_its_published_snapshot(tmp_path):
     provider = FakeSessionProvider([osSession(2, "alice")])
     runtime = launcher.buildRuntime(tmp_path / "data", provider, FakeClock(C))
     app = run(runtime)
-    assert shown(app.info) == ["Unknown"]
+    assert any(i.startswith("Unknown") for i in shown(app.info))
     assert shown(app.warning) == [
         "Session information is currently unavailable",
         "Last known status: none",
     ]
     runtime.pollOnce()
     app.run()
-    assert [b.label for b in app.button if b.key == "statusInUseBadgeBtn"] == [
-        "🔴 In Use — alice (192.168.1.20)"
-    ]
+    assert shown(app.error) == ["[🔴 In Use — alice (192.168.1.20)](#active-sessions)"]
     assert not app.warning
     assert rows(app)[0][:2] == ["alice", "RDP"]
 
@@ -589,22 +574,20 @@ def test_a_fragment_error_leaves_the_rest_of_the_page_intact():
     assert not app.success and not app.dataframe
 
 
-def test_in_use_button_and_expand_collapse_controls():
+def test_expand_and_collapse_all_controls():
     app = run(StubRuntime(healthySnapshot([alice()], C), C))
-    inUseBtn = [b for b in app.button if b.key == "statusInUseBadgeBtn"][0]
-    assert inUseBtn.label == "🔴 In Use — alice (192.168.1.20)"
     assert app.session_state.get("expander_active_open") is not True
 
-    # Clicking In Use badge button expands active sessions
-    inUseBtn.click().run()
-    assert app.session_state.get("expander_active_open") is True
-
-    # Clicking Collapse all closes active sessions
-    collapseBtn = [b for b in app.button if b.key == "collapseAllSectionsBtn"][0]
-    collapseBtn.click().run()
-    assert app.session_state.get("expander_active_open") is False
-
-    # Clicking Expand all opens active sessions
+    # Clicking Expand all opens all sections
     expandBtn = [b for b in app.button if b.key == "expandAllSectionsBtn"][0]
     expandBtn.click().run()
     assert app.session_state.get("expander_active_open") is True
+    assert app.session_state.get("expander_queue_open") is True
+    assert app.session_state.get("expander_notes_open") is True
+
+    # Clicking Collapse all closes all sections
+    collapseBtn = [b for b in app.button if b.key == "collapseAllSectionsBtn"][0]
+    collapseBtn.click().run()
+    assert app.session_state.get("expander_active_open") is False
+    assert app.session_state.get("expander_queue_open") is False
+    assert app.session_state.get("expander_notes_open") is False

@@ -80,21 +80,22 @@ This ledger records architectural decisions, assumptions, and trade-offs for **P
 
 ---
 
-## 2026-10-27 — DEC-014: Interactive Status Buttons, Collapsible Dashboard Cards, and Elastic Spacing (`v0.3.3`)
+## 2026-10-27 — DEC-014: Unified Status Box Heights, Dynamic Column Widths, and Tinted Backgrounds (`v0.3.3`)
 - **Context**: In `v0.3.2`, the dashboard displayed passive status alerts and cards. For `v0.3.3`, requirements called for:
-  1. Status bar navigation: "In Use" and "Next in queue" boxes navigating directly to their respective sections without opening new tabs.
-  2. The entire "In Use" and "Next in queue" boxes behaving as clickable buttons rather than text-only markdown links.
-  3. Status UI icon indicators: `🔴` prefix for "In Use", `🟢` prefix for "Available".
-  4. Collapsible sections: Active sessions, Reservation queue, and Status notes collapsed by default, with `[Expand all]` and `[Collapse all]` controls and user state retention across auto-refreshes.
-  5. Elastic spacing: Ensuring `"🕒 Est. wait: Ready now (~0 min)"` comfortably stays on a single line without wrapping.
+  1. Equal height across all status bar boxes (Status, Next in queue, and Est. wait).
+  2. Dynamic box widths that adjust to text content length so boxes hug their contents and never look stretched out.
+  3. Faint red background for "In Use" and faint green background for "Available", matching Streamlit's native alert design language.
+  4. Status bar navigation: "In Use" navigating to Active sessions and "Next in queue" navigating to Reservation queue via in-page anchors without opening new tabs.
+  5. Status UI icon indicators: `🔴` prefix for "In Use", `🟢` prefix for "Available".
+  6. Collapsible sections: Active sessions, Reservation queue, and Status notes collapsed by default, with `[Expand all]` and `[Collapse all]` controls and user state retention across auto-refreshes.
 - **Decision**:
-  1. Render the primary "In Use" badge in `StatusView` as a full-width `st.button` (`use_container_width=True`) that expands `Active sessions` on click in the same tab, avoiding browser new-tab behavior triggered by non-anchor markdown links. When "Available", standard `st.success` is rendered with `🟢 Available`.
-  2. Render "Next in queue" as a full-width `st.button` when a reservation is queued or ready, expanding the `Reservation queue` section on click, and displaying countdown urgency `(Ready: MM:SS)` when in `READY` state.
-  3. Use pure internal in-page fragment anchors (`#active-sessions`, `#reservation-queue`, `#status-notes`) and remove query parameter wrappers that caused Streamlit markdown to inject `target="_blank"`.
+  1. Render Status using native `st.error` (faint red) when "In Use" and `st.success` (faint green) when "Available", and render Next in queue and Est. wait using `st.info` (faint blue/gray). Because all three use Streamlit's `.stAlert` container, they share identical height, padding, typography, and border radius.
+  2. Implement `statusRowColumnWeights` in `view_model.py` calculating proportional column ratios from content lengths (`len + 8`) and allocating the remaining width to a right-aligned elastic spacer. Boxes dynamically expand or contract with content length (e.g., Status shrinks to 18% when Available, expands to 33% when In Use).
+  3. Use pure internal in-page fragment anchors (`#active-sessions`, `#reservation-queue`, `#status-notes`) so clicks smoothly scroll on the same page without triggering Streamlit's `target="_blank"`.
   4. Implement `[Expand all]` and `[Collapse all]` control buttons above the collapsible sections, with state persisted in `st.session_state`.
-  5. Adjusted top status row column ratios to `[3.2, 3.0, 0.4, 3.4]` in both `StatusView` and `ManageView`, dedicating 34% width to `waitCol` so wait estimates do not line-wrap.
 - **Consequences**:
-  - Clean dashboard interaction with instant section expansion on click.
-  - Zero new tabs opened when clicking status items or banner links.
-  - Zero unhandled exceptions or lint violations, with coverage exceeding 99%.
+  - Perfect visual height alignment across all 3 status strip boxes.
+  - Natural box widths that hug text content rather than stretching unnaturally across the screen.
+  - Clear faint red / faint green visual status indicator backgrounds preserved.
+  - 100% test pass rate (1,591 tests) with 99.81% total coverage.
 

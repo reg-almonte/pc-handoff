@@ -288,6 +288,7 @@ class DashboardViewModel:
     badgeLink: str | None = None
     nextInQueueLink: str | None = None
     nextInQueueUser: str | None = None
+    statusRowWeights: tuple[float, float, float, float] = (20.0, 30.0, 35.0, 20.0)
 
 
 def buildViewModel(snapshot: DashboardSnapshot, now: datetime) -> DashboardViewModel:
@@ -308,10 +309,13 @@ def buildViewModel(snapshot: DashboardSnapshot, now: datetime) -> DashboardViewM
     noteItems = statusNoteItems(snapshot.queueState.statusNotes, now)
     nextQText, nextQUser, nextQLink = nextInQueueInfo(snapshot.queueState, now)
     badgeLink = EXPAND_ACTIVE_LINK if snapshot.status is PcStatus.IN_USE else None
+    badgeText = badgeTextFor(snapshot.status, activeRows)
+    compactWait = compactWaitLine(snapshot.queueState, now)
+    colWeights = statusRowColumnWeights(badgeText, nextQText, compactWait)
     lastUpdated = formatTime(now)
     dataUpdatedAt = formatTime(snapshot.updatedAt)
     return DashboardViewModel(
-        badgeText=badgeTextFor(snapshot.status, activeRows),
+        badgeText=badgeText,
         badgeKind=BADGE_KINDS.get(snapshot.status, BADGE_NEUTRAL),
         badgeLink=badgeLink,
         unavailableBanner=UNAVAILABLE_BANNER if unknown else None,
@@ -337,7 +341,8 @@ def buildViewModel(snapshot: DashboardSnapshot, now: datetime) -> DashboardViewM
         nextInQueueText=nextQText,
         nextInQueueUser=nextQUser,
         nextInQueueLink=nextQLink,
-        compactWaitText=compactWaitLine(snapshot.queueState, now),
+        compactWaitText=compactWait,
+        statusRowWeights=colWeights,
     )
 
 
@@ -547,6 +552,21 @@ def compactWaitLine(queueState: QueueState, now: datetime) -> str:
     if est.waitMinutes <= 0:
         return DEFAULT_COMPACT_WAIT_TEXT
     return f"Est. wait: ~{est.waitMinutes} min"
+
+
+def statusRowColumnWeights(
+    statusText: str,
+    queueText: str,
+    waitText: str,
+    targetTotal: float = 105.0,
+) -> tuple[float, float, float, float]:
+    """Calculate proportional column weights so boxes hug content without looking stretched."""
+    wStatus = max(14.0, float(len(statusText) + 8))
+    wQueue = max(16.0, float(len(queueText) + 8))
+    wWait = max(20.0, float(len(waitText) + 8))
+    contentSum = wStatus + wQueue + wWait
+    spacer = max(6.0, targetTotal - contentSum)
+    return (round(wStatus, 1), round(wQueue, 1), round(wWait, 1), round(spacer, 1))
 
 
 def resolveRdpHost() -> str:

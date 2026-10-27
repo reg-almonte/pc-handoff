@@ -538,3 +538,22 @@ class TestSafeText:
         assert vm.UNAVAILABLE_BANNER == "Session information is currently unavailable"
         assert vm.EMPTY_ACTIVE_MESSAGE == "No active user sessions"
         assert vm.DISCONNECTED_HEADING == "Logged on but disconnected (not in use)"
+
+
+class TestStatusRowColumnWeights:
+    def test_weights_hug_content_and_adjust_for_status_length(self):
+        wAvailable = vm.statusRowColumnWeights(
+            "🟢 Available", "⏳ Next in queue: None", "🕒 Est. wait: Ready now (~0 min)"
+        )
+        wInUse = vm.statusRowColumnWeights(
+            "🔴 In Use — alice (192.168.1.20)",
+            "⏳ Next in queue: None",
+            "🕒 Est. wait: Ready now (~0 min)",
+        )
+        # In Use column is significantly wider than Available column
+        assert wInUse[0] > wAvailable[0]
+        # Spacer column absorbs remaining room
+        assert wAvailable[3] > wInUse[3]
+        # 4 elements: status, queue, wait, spacer
+        assert len(wAvailable) == 4
+        assert len(wInUse) == 4
