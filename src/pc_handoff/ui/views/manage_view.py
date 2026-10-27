@@ -104,11 +104,15 @@ def renderManageView(runtime, model: DashboardViewModel) -> None:
         )
 
     with st.container(border=True):
-        statusCol, queueCol, _spacer = st.columns([2, 2, 3], vertical_alignment="center")
+        statusCol, queueCol, waitCol, _spacer = st.columns(
+            [2.2, 1.8, 1.8, 2.2], vertical_alignment="center"
+        )
         with statusCol:
             renderBadge(model)
         with queueCol, st.container(border=True):
             st.markdown(f"⏳ **{escapeMarkdown(model.nextInQueueText)}**")
+        with waitCol, st.container(border=True):
+            st.markdown(f"🕒 **{escapeMarkdown(model.compactWaitText)}**")
 
     feedbackError = st.session_state.pop(FEEDBACK_ERROR_KEY, None)
     if feedbackError:

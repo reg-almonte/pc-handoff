@@ -75,6 +75,7 @@ RESERVATION_HEADING = "Reservation queue"
 EMPTY_QUEUE_MESSAGE = "No active or queued reservations"
 STATUS_NOTES_HEADING = "Status notes"
 DEFAULT_WAIT_ESTIMATE_LINE = "Estimated wait: ~0 min (Ready now)"
+DEFAULT_COMPACT_WAIT_TEXT = "Est. wait: Ready now (~0 min)"
 NOTE_CATEGORY_LABELS: dict[str, str] = {
     NoteCategory.GENERAL.value: "General",
     NoteCategory.URGENT.value: "Urgent / Do Not Interrupt",
@@ -281,6 +282,7 @@ class DashboardViewModel:
     statusNoteItems: tuple[StatusNoteItem, ...] = ()
     waitEstimateLine: str = DEFAULT_WAIT_ESTIMATE_LINE
     nextInQueueText: str = "Next in queue: None"
+    compactWaitText: str = DEFAULT_COMPACT_WAIT_TEXT
 
 
 def buildViewModel(snapshot: DashboardSnapshot, now: datetime) -> DashboardViewModel:
@@ -325,6 +327,7 @@ def buildViewModel(snapshot: DashboardSnapshot, now: datetime) -> DashboardViewM
         statusNoteItems=noteItems,
         waitEstimateLine=waitEstimateText(snapshot.queueState, now),
         nextInQueueText=nextInQueueLine(snapshot.queueState),
+        compactWaitText=compactWaitLine(snapshot.queueState, now),
     )
 
 
@@ -515,6 +518,14 @@ def nextInQueueLine(queueState: QueueState) -> str:
     if queueState.queuedReservations:
         return f"Next in queue: {displayOrUnknown(queueState.queuedReservations[0].userName)}"
     return "Next in queue: None"
+
+
+def compactWaitLine(queueState: QueueState, now: datetime) -> str:
+    """Build the compact 'Est. wait: ...' summary pill for the top status strip."""
+    est = estimateQueueWait(queueState, now)
+    if est.waitMinutes <= 0:
+        return DEFAULT_COMPACT_WAIT_TEXT
+    return f"Est. wait: ~{est.waitMinutes} min"
 
 
 def resolveRdpHost() -> str:

@@ -90,26 +90,8 @@ def renderTopStatusNoteBanner(model: DashboardViewModel) -> None:
         )
 
 
-def renderViewModel(model: DashboardViewModel, *, manager=None) -> None:
-    with st.container(border=True):
-        statusCol, queueCol, _spacer = st.columns([2, 2, 3], vertical_alignment="center")
-        with statusCol:
-            renderBadge(model)
-        with queueCol, st.container(border=True):
-            st.markdown(f"⏳ **{escapeMarkdown(model.nextInQueueText)}**")
-        renderTopStatusNoteBanner(model)
-        if model.unavailableBanner is not None:
-            st.warning(escapeMarkdown(model.unavailableBanner))
-            st.warning(escapeMarkdown(model.lastKnownLine or ""))
-        for item in visibleNotices(model.noticeItems, st.session_state[DISMISSED_KEY]):
-            st.warning(escapeMarkdown(item.text))
-            st.button(
-                DISMISS_LABEL,
-                key=item.noticeId,
-                on_click=dismissNotice,
-                args=(item.noticeId,),
-            )
-
+def renderSessionsCard(model: DashboardViewModel) -> None:
+    """Render the Active and Disconnected sessions card."""
     with st.container(border=True):
         st.subheader(escapeMarkdown(model.activeHeading), anchor=False)
         if model.activeRows:
@@ -129,30 +111,67 @@ def renderViewModel(model: DashboardViewModel, *, manager=None) -> None:
                 use_container_width=True,
             )
 
-    if model.handoffBanner is not None or model.reservationRows:
-        with st.container(border=True):
-            bannerCol, actionCol = st.columns([4, 1], vertical_alignment="center")
-            if model.handoffBanner is not None:
-                with bannerCol:
-                    st.markdown(escapeMarkdown(model.handoffBanner))
-            if manager is not None:
-                with actionCol:
-                    for row in model.reservationRows:
-                        if row.canClaim:
-                            st.button(
-                                f"Claim Now ({row.user})",
-                                key=f"claim-{row.reservationId}",
-                                on_click=_handleQuickClaim,
-                                args=(manager, row.reservationId),
-                                use_container_width=True,
-                            )
-            if model.reservationRows:
+
+def renderReservationCard(model: DashboardViewModel, *, manager=None) -> None:
+    """Render the Reservation Queue card with inline Claim Now button aligned to the title."""
+    with st.container(border=True):
+        headerCol, actionCol = st.columns([3, 1], vertical_alignment="center")
+        if model.reservationRows:
+            with headerCol:
                 st.subheader(escapeMarkdown(model.reservationHeading), anchor=False)
-                st.dataframe(
-                    table(model.reservationRows, RESERVATION_COLUMNS),
-                    hide_index=True,
-                    use_container_width=True,
-                )
+        if manager is not None:
+            with actionCol:
+                for row in model.reservationRows:
+                    if row.canClaim:
+                        st.button(
+                            f"Claim Now ({row.user})",
+                            key=f"claim-{row.reservationId}",
+                            on_click=_handleQuickClaim,
+                            args=(manager, row.reservationId),
+                            use_container_width=True,
+                        )
+        if model.handoffBanner is not None:
+            st.markdown(escapeMarkdown(model.handoffBanner))
+        if model.reservationRows:
+            st.dataframe(
+                table(model.reservationRows, RESERVATION_COLUMNS),
+                hide_index=True,
+                use_container_width=True,
+            )
+
+
+def renderViewModel(model: DashboardViewModel, *, manager=None) -> None:
+    with st.container(border=True):
+        statusCol, queueCol, waitCol, _spacer = st.columns(
+            [2.2, 1.8, 1.8, 2.2], vertical_alignment="center"
+        )
+        with statusCol:
+            renderBadge(model)
+        with queueCol, st.container(border=True):
+            st.markdown(f"⏳ **{escapeMarkdown(model.nextInQueueText)}**")
+        with waitCol, st.container(border=True):
+            st.markdown(f"🕒 **{escapeMarkdown(model.compactWaitText)}**")
+        renderTopStatusNoteBanner(model)
+        if model.unavailableBanner is not None:
+            st.warning(escapeMarkdown(model.unavailableBanner))
+            st.warning(escapeMarkdown(model.lastKnownLine or ""))
+        for item in visibleNotices(model.noticeItems, st.session_state[DISMISSED_KEY]):
+            st.warning(escapeMarkdown(item.text))
+            st.button(
+                DISMISS_LABEL,
+                key=item.noticeId,
+                on_click=dismissNotice,
+                args=(item.noticeId,),
+            )
+
+    if model.handoffBanner is not None or model.reservationRows:
+        sessionsCol, queueCol = st.columns([3, 2], gap="medium")
+        with sessionsCol:
+            renderSessionsCard(model)
+        with queueCol:
+            renderReservationCard(model, manager=manager)
+    else:
+        renderSessionsCard(model)
 
     if model.statusNoteItems:
         with st.container(border=True):
@@ -161,9 +180,7 @@ def renderViewModel(model: DashboardViewModel, *, manager=None) -> None:
                 st.markdown(escapeMarkdown(note.line))
 
     st.divider()
-    if manager is not None:
-        st.caption(escapeMarkdown(MANAGE_INSTRUCTION_TEXT))
-    footerLeft, footerRight = st.columns([1, 1], vertical_alignment="center")
+    footerLeft, _footerSpacer, footerRight = st.columns([3, 2, 2], vertical_alignment="center")
     with footerLeft:
         st.caption(escapeMarkdown(model.lastUpdatedLine))
     with footerRight:
@@ -176,6 +193,8 @@ def renderStatusView(runtime, model: DashboardViewModel) -> None:
     titleCol, navCol = st.columns([4, 1], vertical_alignment="center")
     with titleCol:
         st.title(PAGE_TITLE, anchor=False)
+        if manager is not None:
+            st.caption(escapeMarkdown(MANAGE_INSTRUCTION_TEXT))
     if manager is not None:
         with navCol:
             st.button(
