@@ -229,3 +229,10 @@ class TestDashboardReservationControls:
 
         # Also verify _handleQuickClaim error path records sanitized error
         _handleQuickClaim(FailingManager(), "r-bad")
+
+        # Verify next-in-queue button click expands queue section
+        runtime.reservationManager.enqueueReservation("charlie", 30)
+        app.run()
+        queueBtn = [b for b in app.button if b.key == "statusQueueBadgeBtn"][0]
+        queueBtn.click().run()
+        assert app.session_state.get("expander_queue_open") is True

@@ -216,7 +216,7 @@ class TestAc1InUseWithLiveDuration:
     def test_badge_and_row(self):
         now = C + timedelta(seconds=3725)
         model = buildViewModel(healthySnapshot([alice()], now - timedelta(seconds=3)), now)
-        assert (model.badgeText, model.badgeKind) == ("In Use — alice (192.168.1.20)", "error")
+        assert (model.badgeText, model.badgeKind) == ("🔴 In Use — alice (192.168.1.20)", "error")
         assert model.unavailableBanner is None
         assert model.lastKnownLine is None
         assert model.activeHeading == "Active sessions"
@@ -253,7 +253,7 @@ class TestAc1InUseWithLiveDuration:
 class TestAc2EmptyState:
     def test_available_with_the_empty_message_and_no_disconnected_section(self):
         model = buildViewModel(healthySnapshot([], C), C + timedelta(seconds=1))
-        assert (model.badgeText, model.badgeKind) == ("Available", "success")
+        assert (model.badgeText, model.badgeKind) == ("🟢 Available", "success")
         assert model.activeRows == ()
         assert model.emptyActiveMessage == "No active user sessions"
         assert model.disconnectedRows == ()
@@ -271,7 +271,7 @@ class TestAc3DisconnectedListedSeparately:
 
     def test_disconnected_sessions_do_not_count_as_active(self):
         model = buildViewModel(healthySnapshot(self.sessions(), self.D), self.D)
-        assert model.badgeText == "Available"
+        assert model.badgeText == "🟢 Available"
         assert model.emptyActiveMessage == "No active user sessions"
         assert model.disconnectedHeading == "Logged on but disconnected (not in use)"
         assert model.disconnectedRows == (
@@ -282,7 +282,7 @@ class TestAc3DisconnectedListedSeparately:
     def test_variant_with_carol_active(self):
         carol = trackedActive(4, "carol", connectTime=C, startEventTimestamp=C)
         model = buildViewModel(healthySnapshot([*self.sessions(), carol], self.D), self.D)
-        assert (model.badgeText, model.badgeKind) == ("In Use — carol (192.168.1.20)", "error")
+        assert (model.badgeText, model.badgeKind) == ("🔴 In Use — carol (192.168.1.20)", "error")
         assert [r.user for r in model.activeRows] == ["carol"]
         assert model.emptyActiveMessage is None
         assert [r.user for r in model.disconnectedRows] == ["alice", "bob"]
@@ -308,7 +308,7 @@ class TestAc4UnknownFieldsAndApproximateDurations:
             clientAddress=None,
         )
         model = buildViewModel(healthySnapshot([erin], C), C + timedelta(seconds=61))
-        assert model.badgeText == "In Use — erin (N/A)"
+        assert model.badgeText == "🔴 In Use — erin (N/A)"
         [row] = model.activeRows
         assert (row.user, row.connectionType, row.clientName, row.clientIp) == (
             "erin",
@@ -404,7 +404,7 @@ class TestAc7Recovery:
         after = buildViewModel(healthySnapshot([alice()], p + timedelta(seconds=5)), p)
         assert before.unavailableBanner is not None
         assert (after.unavailableBanner, after.lastKnownLine) == (None, None)
-        assert after.badgeText == "In Use — alice (192.168.1.20)"
+        assert after.badgeText == "🔴 In Use — alice (192.168.1.20)"
         assert after.activeHeading == "Active sessions"
 
 

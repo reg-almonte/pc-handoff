@@ -104,13 +104,19 @@ def renderManageView(runtime, model: DashboardViewModel) -> None:
         )
 
     with st.container(border=True):
-        statusCol, queueCol, waitCol, _spacer = st.columns(
-            [2.2, 1.8, 1.8, 2.2], vertical_alignment="center"
+        statusCol, queueCol, _spacer, waitCol = st.columns(
+            [3.2, 3.0, 0.4, 3.4], vertical_alignment="center"
         )
         with statusCol:
             renderBadge(model)
         with queueCol, st.container(border=True):
-            st.markdown(f"⏳ **{escapeMarkdown(model.nextInQueueText)}**")
+            if model.nextInQueueLink:
+                suffix = model.nextInQueueText.removeprefix("Next in queue: ")
+                st.markdown(
+                    f"⏳ **Next in queue:** [{escapeMarkdown(suffix)}]({model.nextInQueueLink})"
+                )
+            else:
+                st.markdown(f"⏳ **{escapeMarkdown(model.nextInQueueText)}**")
         with waitCol, st.container(border=True):
             st.markdown(f"🕒 **{escapeMarkdown(model.compactWaitText)}**")
 

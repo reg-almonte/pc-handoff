@@ -26,7 +26,17 @@ DISMISS_LABEL = "Dismiss"
 DISMISSED_TOP_NOTE_KEY = "dismissedTopNoteId"
 CLOSE_TOP_NOTE_KEY = "closeTopStatusNoteBtn"
 CLOSE_TOP_NOTE_LABEL = "✕"
+STATUS_IN_USE_BTN_KEY = "statusInUseBadgeBtn"
+STATUS_QUEUE_BTN_KEY = "statusQueueBadgeBtn"
 STATUS_NOTES_ANCHOR = "status-notes"
+ACTIVE_SESSIONS_ANCHOR = "active-sessions"
+RESERVATION_QUEUE_ANCHOR = "reservation-queue"
+
+EXPAND_ALL_KEY = "expandAllSectionsBtn"
+COLLAPSE_ALL_KEY = "collapseAllSectionsBtn"
+SESSION_ACTIVE_OPEN_KEY = "expander_active_open"
+SESSION_QUEUE_OPEN_KEY = "expander_queue_open"
+SESSION_NOTES_OPEN_KEY = "expander_notes_open"
 MANAGE_INSTRUCTION_TEXT = (
     "To join the queue, offer a handoff, or post a status note, "
     "use the ⚙️ Manage Queue & Notes button at the upper right."
@@ -56,14 +66,27 @@ def table(rows, columns) -> pd.DataFrame:
     return pd.DataFrame([row.cells() for row in rows], columns=list(columns), dtype="string")
 
 
+def _onInUseBadgeClick() -> None:
+    st.session_state[SESSION_ACTIVE_OPEN_KEY] = True
+
+
+def _onQueueBadgeClick() -> None:
+    st.session_state[SESSION_QUEUE_OPEN_KEY] = True
+
+
 def renderBadge(model: DashboardViewModel) -> None:
-    text = escapeMarkdown(model.badgeText)
-    if model.badgeKind == BADGE_SUCCESS:
-        st.success(text)
-    elif model.badgeKind == BADGE_ERROR:
-        st.error(text)
+    if model.badgeKind == BADGE_ERROR:
+        st.button(
+            model.badgeText,
+            key=STATUS_IN_USE_BTN_KEY,
+            on_click=_onInUseBadgeClick,
+            use_container_width=True,
+            help="Click to expand Active sessions",
+        )
+    elif model.badgeKind == BADGE_SUCCESS:
+        st.success(model.badgeText)
     else:
-        st.info(text)
+        st.info(model.badgeText)
 
 
 def renderTopStatusNoteBanner(model: DashboardViewModel) -> None:
@@ -90,11 +113,11 @@ def renderTopStatusNoteBanner(model: DashboardViewModel) -> None:
         )
 
 
-def renderSessionsCard(model: DashboardViewModel) -> None:
+def renderSessionsCard(model: DashboardViewModel, *, expanded: bool = False) -> None:
     """Render the collapsible Active and Disconnected sessions section."""
     label = f"🖥️ {escapeMarkdown(model.activeHeading)} ({len(model.activeRows)})"
-    with st.expander(label, expanded=True):
-        st.subheader(escapeMarkdown(model.activeHeading), anchor=False)
+    with st.expander(label, expanded=expanded):
+        st.subheader(escapeMarkdown(model.activeHeading), anchor=ACTIVE_SESSIONS_ANCHOR)
         if model.activeRows:
             st.dataframe(
                 table(model.activeRows, ACTIVE_COLUMNS),
@@ -113,14 +136,18 @@ def renderSessionsCard(model: DashboardViewModel) -> None:
             )
 
 
-def renderReservationCard(model: DashboardViewModel, *, manager=None) -> None:
+def renderReservationCard(
+    model: DashboardViewModel, *, manager=None, expanded: bool = False
+) -> None:
     """Render the collapsible Reservation Queue section with inline Claim Now button."""
     label = f"📋 {escapeMarkdown(model.reservationHeading)} ({len(model.reservationRows)})"
-    with st.expander(label, expanded=True):
+    with st.expander(label, expanded=expanded):
         headerCol, actionCol = st.columns([4, 1], vertical_alignment="center")
         if model.reservationRows:
             with headerCol:
-                st.subheader(escapeMarkdown(model.reservationHeading), anchor=False)
+                st.subheader(
+                    escapeMarkdown(model.reservationHeading), anchor=RESERVATION_QUEUE_ANCHOR
+                )
         if manager is not None:
             with actionCol:
                 for row in model.reservationRows:
@@ -143,14 +170,32 @@ def renderReservationCard(model: DashboardViewModel, *, manager=None) -> None:
 
 
 def renderViewModel(model: DashboardViewModel, *, manager=None) -> None:
+    expandParam = st.query_params.get("expand")
+    if expandParam == "active":
+        st.session_state[SESSION_ACTIVE_OPEN_KEY] = True
+    elif expandParam == "queue":
+        st.session_state[SESSION_QUEUE_OPEN_KEY] = True
+    elif expandParam == "notes":
+        st.session_state[SESSION_NOTES_OPEN_KEY] = True
+
     with st.container(border=True):
-        statusCol, queueCol, waitCol, _spacer = st.columns(
-            [2.2, 1.8, 1.8, 2.2], vertical_alignment="center"
+        statusCol, queueCol, _spacer, waitCol = st.columns(
+            [3.2, 3.0, 0.4, 3.4], vertical_alignment="center"
         )
         with statusCol:
             renderBadge(model)
-        with queueCol, st.container(border=True):
-            st.markdown(f"⏳ **{escapeMarkdown(model.nextInQueueText)}**")
+        with queueCol:
+            if model.nextInQueueUser:
+                st.button(
+                    f"⏳ {model.nextInQueueText}",
+                    key=STATUS_QUEUE_BTN_KEY,
+                    on_click=_onQueueBadgeClick,
+                    use_container_width=True,
+                    help="Click to expand Reservation queue",
+                )
+            else:
+                with st.container(border=True):
+                    st.markdown(f"⏳ **{escapeMarkdown(model.nextInQueueText)}**")
         with waitCol, st.container(border=True):
             st.markdown(f"🕒 **{escapeMarkdown(model.compactWaitText)}**")
         renderTopStatusNoteBanner(model)
@@ -166,14 +211,30 @@ def renderViewModel(model: DashboardViewModel, *, manager=None) -> None:
                 args=(item.noticeId,),
             )
 
-    renderSessionsCard(model)
+    ctrlCol1, ctrlCol2, _ctrlSpacer = st.columns([1, 1, 8])
+    with ctrlCol1:
+        if st.button("Expand all", key=EXPAND_ALL_KEY):
+            st.session_state[SESSION_ACTIVE_OPEN_KEY] = True
+            st.session_state[SESSION_QUEUE_OPEN_KEY] = True
+            st.session_state[SESSION_NOTES_OPEN_KEY] = True
+    with ctrlCol2:
+        if st.button("Collapse all", key=COLLAPSE_ALL_KEY):
+            st.session_state[SESSION_ACTIVE_OPEN_KEY] = False
+            st.session_state[SESSION_QUEUE_OPEN_KEY] = False
+            st.session_state[SESSION_NOTES_OPEN_KEY] = False
+
+    activeExpanded = st.session_state.get(SESSION_ACTIVE_OPEN_KEY, False)
+    queueExpanded = st.session_state.get(SESSION_QUEUE_OPEN_KEY, False)
+    notesExpanded = st.session_state.get(SESSION_NOTES_OPEN_KEY, False)
+
+    renderSessionsCard(model, expanded=activeExpanded)
 
     if model.handoffBanner is not None or model.reservationRows:
-        renderReservationCard(model, manager=manager)
+        renderReservationCard(model, manager=manager, expanded=queueExpanded)
 
     if model.statusNoteItems:
         notesLabel = f"📌 {escapeMarkdown(model.statusNotesHeading)} ({len(model.statusNoteItems)})"
-        with st.expander(notesLabel, expanded=True):
+        with st.expander(notesLabel, expanded=notesExpanded):
             st.subheader(escapeMarkdown(model.statusNotesHeading), anchor=STATUS_NOTES_ANCHOR)
             for note in model.statusNoteItems:
                 st.markdown(escapeMarkdown(note.line))
