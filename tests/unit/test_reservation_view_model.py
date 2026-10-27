@@ -60,6 +60,7 @@ class TestReservationViewModel:
         assert vm.statusNotesHeading == STATUS_NOTES_HEADING
         assert vm.statusNoteItems == ()
         assert vm.nextInQueueText == "Next in queue: None"
+        assert vm.compactWaitText == "Est. wait: Ready now (~0 min)"
 
     def test_reservation_rows_countdown_claimability_and_sanitization(self) -> None:
         # 1. Head QUEUED when no ACTIVE or READY exists -> canClaim is True
@@ -75,6 +76,7 @@ class TestReservationViewModel:
         vmQueued = buildViewModel(snapshotWithQueue(q2), T0)
         assert vmQueued.emptyQueueMessage is None
         assert vmQueued.nextInQueueText == "Next in queue: alice"
+        assert vmQueued.compactWaitText == "Est. wait: ~75 min"
         assert len(vmQueued.reservationRows) == 2
         row1, row2 = vmQueued.reservationRows
         assert row1.canClaim is True
