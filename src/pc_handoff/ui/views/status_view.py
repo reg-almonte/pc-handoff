@@ -10,8 +10,6 @@ from pc_handoff.ui.navigation import (
 )
 from pc_handoff.ui.view_model import (
     ACTIVE_COLUMNS,
-    BADGE_ERROR,
-    BADGE_SUCCESS,
     DISCONNECTED_COLUMNS,
     RESERVATION_COLUMNS,
     DashboardViewModel,
@@ -26,9 +24,70 @@ DISMISS_LABEL = "Dismiss"
 DISMISSED_TOP_NOTE_KEY = "dismissedTopNoteId"
 CLOSE_TOP_NOTE_KEY = "closeTopStatusNoteBtn"
 CLOSE_TOP_NOTE_LABEL = "✕"
+STATUS_BADGE_BTN_PREFIX = "statusBadgeBtn"
+QUEUE_BADGE_BTN_KEY = "queueBadgeBtn"
+WAIT_BADGE_BTN_KEY = "waitBadgeBtn"
 STATUS_NOTES_ANCHOR = "status-notes"
 ACTIVE_SESSIONS_ANCHOR = "active-sessions"
 RESERVATION_QUEUE_ANCHOR = "reservation-queue"
+
+STATUS_ROW_STYLES = """
+<style>
+.st-key-statusBadgeBtn-error button {
+    background-color: rgba(255, 75, 75, 0.12) !important;
+    border: 1px solid rgba(255, 75, 75, 0.4) !important;
+    color: #ff4b4b !important;
+    font-weight: 600 !important;
+    height: 42px !important;
+    border-radius: 0.5rem !important;
+    padding: 0 0.75rem !important;
+}
+.st-key-statusBadgeBtn-error button:hover {
+    background-color: rgba(255, 75, 75, 0.22) !important;
+    border-color: rgba(255, 75, 75, 0.6) !important;
+}
+.st-key-statusBadgeBtn-success button {
+    background-color: rgba(33, 195, 84, 0.12) !important;
+    border: 1px solid rgba(33, 195, 84, 0.4) !important;
+    color: #21c354 !important;
+    font-weight: 600 !important;
+    height: 42px !important;
+    border-radius: 0.5rem !important;
+    padding: 0 0.75rem !important;
+}
+.st-key-statusBadgeBtn-success button:hover {
+    background-color: rgba(33, 195, 84, 0.22) !important;
+    border-color: rgba(33, 195, 84, 0.6) !important;
+}
+.st-key-statusBadgeBtn-neutral button,
+.st-key-queueBadgeBtn button,
+.st-key-waitBadgeBtn button {
+    background-color: rgba(0, 104, 201, 0.08) !important;
+    border: 1px solid rgba(0, 104, 201, 0.3) !important;
+    color: #0068c9 !important;
+    font-weight: 600 !important;
+    height: 42px !important;
+    border-radius: 0.5rem !important;
+    padding: 0 0.75rem !important;
+}
+.st-key-queueBadgeBtn button:hover {
+    background-color: rgba(0, 104, 201, 0.18) !important;
+    border-color: rgba(0, 104, 201, 0.5) !important;
+}
+.st-key-waitBadgeBtn button {
+    cursor: default !important;
+}
+.st-key-statusBadgeBtn-error button p,
+.st-key-statusBadgeBtn-success button p,
+.st-key-statusBadgeBtn-neutral button p,
+.st-key-queueBadgeBtn button p,
+.st-key-waitBadgeBtn button p {
+    white-space: nowrap !important;
+    overflow: hidden !important;
+    text-overflow: ellipsis !important;
+}
+</style>
+"""
 
 EXPAND_ALL_KEY = "expandAllSectionsBtn"
 COLLAPSE_ALL_KEY = "collapseAllSectionsBtn"
@@ -40,6 +99,16 @@ MANAGE_INSTRUCTION_TEXT = (
     "use the ⚙️ Manage Queue & Notes button at the upper right."
 )
 FEEDBACK_ERROR_KEY = "reservationFeedbackError"
+
+
+def onStatusBadgeClick() -> None:
+    st.session_state[SESSION_ACTIVE_OPEN_KEY] = True
+    NavigationController.goToStatus(st.session_state)
+
+
+def onQueueBadgeClick() -> None:
+    st.session_state[SESSION_QUEUE_OPEN_KEY] = True
+    NavigationController.goToStatus(st.session_state)
 
 
 def dismissNotice(noticeId: str) -> None:
@@ -65,17 +134,14 @@ def table(rows, columns) -> pd.DataFrame:
 
 
 def renderBadge(model: DashboardViewModel) -> None:
-    if model.badgeLink:
-        text = f"[{escapeMarkdown(model.badgeText)}]({model.badgeLink})"
-    else:
-        text = escapeMarkdown(model.badgeText)
-
-    if model.badgeKind == BADGE_ERROR:
-        st.error(text)
-    elif model.badgeKind == BADGE_SUCCESS:
-        st.success(text)
-    else:
-        st.info(text)
+    key = f"{STATUS_BADGE_BTN_PREFIX}-{model.badgeKind}"
+    st.button(
+        model.badgeText,
+        key=key,
+        on_click=onStatusBadgeClick,
+        use_container_width=True,
+        help="Click to expand Active sessions",
+    )
 
 
 def renderTopStatusNoteBanner(model: DashboardViewModel) -> None:
@@ -168,21 +234,26 @@ def renderViewModel(model: DashboardViewModel, *, manager=None) -> None:
         st.session_state[SESSION_NOTES_OPEN_KEY] = True
 
     with st.container(border=True):
-        statusCol, queueCol, waitCol, _spacer = st.columns(
+        st.html(STATUS_ROW_STYLES)
+        statusCol, queueCol, _spacer, waitCol = st.columns(
             list(model.statusRowWeights), vertical_alignment="center"
         )
         with statusCol:
             renderBadge(model)
         with queueCol:
-            if model.nextInQueueLink:
-                suffix = model.nextInQueueText.removeprefix("Next in queue: ")
-                st.info(
-                    f"⏳ **Next in queue:** [{escapeMarkdown(suffix)}]({model.nextInQueueLink})"
-                )
-            else:
-                st.info(f"⏳ **{escapeMarkdown(model.nextInQueueText)}**")
+            st.button(
+                f"⏳ {model.nextInQueueText}",
+                key=QUEUE_BADGE_BTN_KEY,
+                on_click=onQueueBadgeClick,
+                use_container_width=True,
+                help="Click to expand Reservation queue",
+            )
         with waitCol:
-            st.info(f"🕒 **{escapeMarkdown(model.compactWaitText)}**")
+            st.button(
+                f"🕒 {model.compactWaitText}",
+                key=WAIT_BADGE_BTN_KEY,
+                use_container_width=True,
+            )
         renderTopStatusNoteBanner(model)
         if model.unavailableBanner is not None:
             st.warning(escapeMarkdown(model.unavailableBanner))
