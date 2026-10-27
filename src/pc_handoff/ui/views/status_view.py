@@ -91,8 +91,9 @@ def renderTopStatusNoteBanner(model: DashboardViewModel) -> None:
 
 
 def renderSessionsCard(model: DashboardViewModel) -> None:
-    """Render the Active and Disconnected sessions card."""
-    with st.container(border=True):
+    """Render the collapsible Active and Disconnected sessions section."""
+    label = f"🖥️ {escapeMarkdown(model.activeHeading)} ({len(model.activeRows)})"
+    with st.expander(label, expanded=True):
         st.subheader(escapeMarkdown(model.activeHeading), anchor=False)
         if model.activeRows:
             st.dataframe(
@@ -113,9 +114,10 @@ def renderSessionsCard(model: DashboardViewModel) -> None:
 
 
 def renderReservationCard(model: DashboardViewModel, *, manager=None) -> None:
-    """Render the Reservation Queue card with inline Claim Now button aligned to the title."""
-    with st.container(border=True):
-        headerCol, actionCol = st.columns([3, 1], vertical_alignment="center")
+    """Render the collapsible Reservation Queue section with inline Claim Now button."""
+    label = f"📋 {escapeMarkdown(model.reservationHeading)} ({len(model.reservationRows)})"
+    with st.expander(label, expanded=True):
+        headerCol, actionCol = st.columns([4, 1], vertical_alignment="center")
         if model.reservationRows:
             with headerCol:
                 st.subheader(escapeMarkdown(model.reservationHeading), anchor=False)
@@ -164,17 +166,14 @@ def renderViewModel(model: DashboardViewModel, *, manager=None) -> None:
                 args=(item.noticeId,),
             )
 
+    renderSessionsCard(model)
+
     if model.handoffBanner is not None or model.reservationRows:
-        sessionsCol, queueCol = st.columns([3, 2], gap="medium")
-        with sessionsCol:
-            renderSessionsCard(model)
-        with queueCol:
-            renderReservationCard(model, manager=manager)
-    else:
-        renderSessionsCard(model)
+        renderReservationCard(model, manager=manager)
 
     if model.statusNoteItems:
-        with st.container(border=True):
+        notesLabel = f"📌 {escapeMarkdown(model.statusNotesHeading)} ({len(model.statusNoteItems)})"
+        with st.expander(notesLabel, expanded=True):
             st.subheader(escapeMarkdown(model.statusNotesHeading), anchor=STATUS_NOTES_ANCHOR)
             for note in model.statusNoteItems:
                 st.markdown(escapeMarkdown(note.line))
