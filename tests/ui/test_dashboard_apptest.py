@@ -150,7 +150,7 @@ def test_before_the_first_publish_the_page_waits():
 def test_ac1_in_use_with_full_session_details_and_a_live_duration():
     app = run(StubRuntime(healthySnapshot([alice()], C), C + timedelta(seconds=3725)))
     assert shown(app.success) == []
-    assert shown(app.error) == ["In Use"]
+    assert shown(app.error) == ["In Use — alice (192.168.1.20)"]
     assert shown(app.subheader) == ["Active sessions"]
     assert list(app.dataframe[0].value.columns) == list(ACTIVE_COLUMNS)
     assert rows(app) == [["alice", "RDP", "ALICE-LAPTOP", "192.168.1.20", local(C), "01:02:05"]]
@@ -192,7 +192,7 @@ def test_ac3_variant_carol_active_shows_in_use_and_only_carol_as_active():
         carol,
     ]
     app = run(StubRuntime(healthySnapshot(sessions, d), d))
-    assert shown(app.error) == ["In Use"]
+    assert shown(app.error) == ["In Use — carol (192.168.1.20)"]
     assert [r[0] for r in rows(app, 0)] == ["carol"]
     assert [r[0] for r in rows(app, 1)] == ["alice", "bob"]
     assert not app.text
@@ -218,7 +218,7 @@ def test_ac4_missing_client_fields_show_unknown_and_approximate_durations_are_ma
     dave = trackedActive(3, "dave", connectTime=None, startEventTimestamp=t1)
     app = run(StubRuntime(healthySnapshot([erin, dave], t1), t1 + timedelta(seconds=30)))
     erinRow, daveRow = rows(app)
-    assert erinRow[:4] == ["erin", "Console", "Unknown", "Unknown"]
+    assert erinRow[:4] == ["erin", "Console", "N/A", "N/A"]
     assert daveRow[4:] == [local(t1), "00:00:30 (approx.)"]
 
 
@@ -269,7 +269,7 @@ def test_ac7_recovery_removes_the_banner_on_the_next_refresh():
     runtime.stateStore.publish(healthySnapshot([alice()], P + timedelta(seconds=600)))
     app.run()
     assert not app.warning
-    assert shown(app.error) == ["In Use"]
+    assert shown(app.error) == ["In Use — alice (192.168.1.20)"]
     assert shown(app.subheader) == ["Active sessions"]
     assert rows(app)[0][5] == "01:12:03"
 
@@ -478,7 +478,7 @@ def test_the_page_reads_only_config_clock_and_the_snapshot():
     # raises, which the page would report as a dashboard error.
     app = run(StubRuntime(healthySnapshot([alice()], C), C))
     assert not [e for e in app.error if "Dashboard error" in e.value]
-    assert shown(app.error) == ["In Use"]
+    assert shown(app.error) == ["In Use — alice (192.168.1.20)"]
 
 
 def test_rendering_never_triggers_or_waits_for_a_poll(tmp_path):
@@ -501,7 +501,7 @@ def test_rendering_never_triggers_or_waits_for_a_poll(tmp_path):
         app = run(runtime)
         app.run()
         elapsed = time.monotonic() - started
-        assert shown(app.error) == ["In Use"]
+        assert shown(app.error) == ["In Use — alice (192.168.1.20)"]
         assert rows(app)[0][0] == "alice"
         assert provider.callCount == 2  # the page started no poll of its own
         assert elapsed < 3, elapsed
@@ -523,7 +523,7 @@ def test_the_real_runtime_renders_its_published_snapshot(tmp_path):
     ]
     runtime.pollOnce()
     app.run()
-    assert shown(app.error) == ["In Use"]
+    assert shown(app.error) == ["In Use — alice (192.168.1.20)"]
     assert not app.warning
     assert rows(app)[0][:2] == ["alice", "RDP"]
 

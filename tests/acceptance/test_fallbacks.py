@@ -26,7 +26,7 @@ def test_ac09_missing_client_information_shows_unknown(app, clientName, clientAd
     app.tick()
 
     page = app.render()
-    assert page.badge == "In Use"
+    assert page.badge == f"In Use — alice ({clientAddress or 'Unknown'})"
     row = page.activeRow("alice")
     assert row[2:4] == [clientName or "Unknown", clientAddress or "Unknown"]
     assert "" not in row

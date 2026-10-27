@@ -216,7 +216,7 @@ class TestAc1InUseWithLiveDuration:
     def test_badge_and_row(self):
         now = C + timedelta(seconds=3725)
         model = buildViewModel(healthySnapshot([alice()], now - timedelta(seconds=3)), now)
-        assert (model.badgeText, model.badgeKind) == ("In Use", "error")
+        assert (model.badgeText, model.badgeKind) == ("In Use — alice (192.168.1.20)", "error")
         assert model.unavailableBanner is None
         assert model.lastKnownLine is None
         assert model.activeHeading == "Active sessions"
@@ -282,7 +282,7 @@ class TestAc3DisconnectedListedSeparately:
     def test_variant_with_carol_active(self):
         carol = trackedActive(4, "carol", connectTime=C, startEventTimestamp=C)
         model = buildViewModel(healthySnapshot([*self.sessions(), carol], self.D), self.D)
-        assert (model.badgeText, model.badgeKind) == ("In Use", "error")
+        assert (model.badgeText, model.badgeKind) == ("In Use — carol (192.168.1.20)", "error")
         assert [r.user for r in model.activeRows] == ["carol"]
         assert model.emptyActiveMessage is None
         assert [r.user for r in model.disconnectedRows] == ["alice", "bob"]
@@ -308,12 +308,13 @@ class TestAc4UnknownFieldsAndApproximateDurations:
             clientAddress=None,
         )
         model = buildViewModel(healthySnapshot([erin], C), C + timedelta(seconds=61))
+        assert model.badgeText == "In Use — erin (N/A)"
         [row] = model.activeRows
         assert (row.user, row.connectionType, row.clientName, row.clientIp) == (
             "erin",
             "Console",
-            "Unknown",
-            "Unknown",
+            "N/A",
+            "N/A",
         )
         assert row.duration == "00:01:01"
 
@@ -403,7 +404,7 @@ class TestAc7Recovery:
         after = buildViewModel(healthySnapshot([alice()], p + timedelta(seconds=5)), p)
         assert before.unavailableBanner is not None
         assert (after.unavailableBanner, after.lastKnownLine) == (None, None)
-        assert after.badgeText == "In Use"
+        assert after.badgeText == "In Use — alice (192.168.1.20)"
         assert after.activeHeading == "Active sessions"
 
 
