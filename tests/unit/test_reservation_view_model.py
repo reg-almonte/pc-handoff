@@ -59,6 +59,7 @@ class TestReservationViewModel:
         assert vm.handoffBanner is None
         assert vm.statusNotesHeading == STATUS_NOTES_HEADING
         assert vm.statusNoteItems == ()
+        assert vm.nextInQueueText == "Next in queue: None"
 
     def test_reservation_rows_countdown_claimability_and_sanitization(self) -> None:
         # 1. Head QUEUED when no ACTIVE or READY exists -> canClaim is True
@@ -73,6 +74,7 @@ class TestReservationViewModel:
         q2 = enqueueReservation(q1, "bob", 30, T0, notes=None, pcAvailable=False).state
         vmQueued = buildViewModel(snapshotWithQueue(q2), T0)
         assert vmQueued.emptyQueueMessage is None
+        assert vmQueued.nextInQueueText == "Next in queue: alice"
         assert len(vmQueued.reservationRows) == 2
         row1, row2 = vmQueued.reservationRows
         assert row1.canClaim is True
@@ -99,6 +101,7 @@ class TestReservationViewModel:
         assert readyRow.canClaim is True
         assert queuedRow.canClaim is False
         assert vmReady.handoffBanner == "Handoff offered by dave to alice — claim within 00:04:00"
+        assert vmReady.nextInQueueText == "Next in queue: alice"
 
     def test_handoff_banner_variants(self) -> None:
         # Automatic offer (offeredByUserName is None)

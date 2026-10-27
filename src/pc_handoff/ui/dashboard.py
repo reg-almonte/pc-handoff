@@ -28,6 +28,7 @@ from pc_handoff.ui.views.status_view import (
     DISMISSED_TOP_NOTE_KEY,
     FEEDBACK_ERROR_KEY,
     MANAGE_INSTRUCTION_TEXT,
+    PAGE_TITLE,
     dismissNotice,
     dismissTopStatusNote,
     renderBadge,
@@ -36,7 +37,6 @@ from pc_handoff.ui.views.status_view import (
     table,
 )
 
-PAGE_TITLE = "PC Handoff"
 NOT_STARTED_MESSAGE = "Start PC Handoff with: python -m pc_handoff"
 WAITING_MESSAGE = "Waiting for the first status update."
 
@@ -85,6 +85,7 @@ def renderConfigWarnings(runtime) -> None:
 def renderStatus(runtime) -> None:
     snapshot = runtime.stateStore.current()
     if snapshot is None:
+        st.title(PAGE_TITLE, anchor=False)
         st.info(WAITING_MESSAGE)
         return
     model = buildViewModel(snapshot, runtime.clock.now())
@@ -101,9 +102,9 @@ def statusArea(runtime) -> None:
 
 def main() -> None:
     st.set_page_config(page_title=PAGE_TITLE, layout="wide")
-    st.title(PAGE_TITLE, anchor=False)
     runtime = getRuntime()
     if runtime is None:
+        st.title(PAGE_TITLE, anchor=False)
         st.error(NOT_STARTED_MESSAGE)
         st.stop()
     st.session_state.setdefault(DISMISSED_KEY, set())
