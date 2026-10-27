@@ -19,6 +19,10 @@ from pc_handoff.ui.view_model import (
 from pc_handoff.ui.views.status_view import (
     FEEDBACK_ERROR_KEY,
     PAGE_TITLE,
+    QUEUE_BADGE_BTN_KEY,
+    STATUS_ROW_STYLES,
+    WAIT_BADGE_BTN_KEY,
+    onQueueBadgeClick,
     renderBadge,
     table,
 )
@@ -104,21 +108,26 @@ def renderManageView(runtime, model: DashboardViewModel) -> None:
         )
 
     with st.container(border=True):
-        statusCol, queueCol, waitCol, _spacer = st.columns(
+        st.html(STATUS_ROW_STYLES)
+        statusCol, queueCol, _spacer, waitCol = st.columns(
             list(model.statusRowWeights), vertical_alignment="center"
         )
         with statusCol:
             renderBadge(model)
         with queueCol:
-            if model.nextInQueueLink:
-                suffix = model.nextInQueueText.removeprefix("Next in queue: ")
-                st.info(
-                    f"⏳ **Next in queue:** [{escapeMarkdown(suffix)}]({model.nextInQueueLink})"
-                )
-            else:
-                st.info(f"⏳ **{escapeMarkdown(model.nextInQueueText)}**")
+            st.button(
+                f"⏳ {model.nextInQueueText}",
+                key=QUEUE_BADGE_BTN_KEY,
+                on_click=onQueueBadgeClick,
+                use_container_width=True,
+                help="Click to expand Reservation queue",
+            )
         with waitCol:
-            st.info(f"🕒 **{escapeMarkdown(model.compactWaitText)}**")
+            st.button(
+                f"🕒 {model.compactWaitText}",
+                key=WAIT_BADGE_BTN_KEY,
+                use_container_width=True,
+            )
 
     feedbackError = st.session_state.pop(FEEDBACK_ERROR_KEY, None)
     if feedbackError:

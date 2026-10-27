@@ -120,6 +120,11 @@ def alice(**overrides: Any):
     return trackedActive(2, "alice", **fields)
 
 
+def statusBadge(app: AppTest):
+    [btn] = [b for b in app.button if b.key and b.key.startswith("statusBadgeBtn-")]
+    return btn
+
+
 def walk(node) -> Iterator[Any]:
     yield node
     children = getattr(node, "children", None)
@@ -149,8 +154,8 @@ def test_before_the_first_publish_the_page_waits():
 
 def test_ac1_in_use_with_full_session_details_and_a_live_duration():
     app = run(StubRuntime(healthySnapshot([alice()], C), C + timedelta(seconds=3725)))
-    assert shown(app.success) == []
-    assert shown(app.error) == ["[🔴 In Use — alice (192.168.1.20)](#active-sessions)"]
+    assert statusBadge(app).label == "🔴 In Use — alice (192.168.1.20)"
+    assert statusBadge(app).key == "statusBadgeBtn-error"
     assert shown(app.subheader) == ["Active sessions"]
     assert list(app.dataframe[0].value.columns) == list(ACTIVE_COLUMNS)
     assert rows(app) == [["alice", "RDP", "ALICE-LAPTOP", "192.168.1.20", local(C), "01:02:05"]]
@@ -159,8 +164,8 @@ def test_ac1_in_use_with_full_session_details_and_a_live_duration():
 
 def test_ac2_empty_state_shows_available_and_no_session_lists():
     app = run(StubRuntime(healthySnapshot([], C), C))
-    assert shown(app.success) == ["Available"]
-    assert app.success[0].icon == "🟢"
+    assert statusBadge(app).label == "🟢 Available"
+    assert statusBadge(app).key == "statusBadgeBtn-success"
     assert [t.value for t in app.text] == ["No active user sessions"]
     assert not app.dataframe
     assert shown(app.subheader) == ["Active sessions"]
@@ -173,7 +178,8 @@ def test_ac3_disconnected_sessions_are_listed_separately():
         trackedDisconnected(3, "bob", disconnectedSince=d),
     ]
     app = run(StubRuntime(healthySnapshot(sessions, d), d))
-    assert shown(app.success) == ["Available"]
+    assert statusBadge(app).label == "🟢 Available"
+    assert statusBadge(app).key == "statusBadgeBtn-success"
     assert [t.value for t in app.text] == ["No active user sessions"]
     assert shown(app.subheader) == [
         "Active sessions",
@@ -193,7 +199,8 @@ def test_ac3_variant_carol_active_shows_in_use_and_only_carol_as_active():
         carol,
     ]
     app = run(StubRuntime(healthySnapshot(sessions, d), d))
-    assert shown(app.error) == ["[🔴 In Use — carol (192.168.1.20)](#active-sessions)"]
+    assert statusBadge(app).label == "🔴 In Use — carol (192.168.1.20)"
+    assert statusBadge(app).key == "statusBadgeBtn-error"
     assert [r[0] for r in rows(app, 0)] == ["carol"]
     assert [r[0] for r in rows(app, 1)] == ["alice", "bob"]
     assert not app.text
@@ -239,7 +246,8 @@ def unknownRuntime() -> StubRuntime:
 def test_ac5_unknown_shows_banner_last_known_status_and_frozen_durations():
     runtime = unknownRuntime()
     app = run(runtime)
-    assert shown(app.info)[0] == "Unknown"
+    assert statusBadge(app).label == "Unknown"
+    assert statusBadge(app).key == "statusBadgeBtn-neutral"
     assert shown(app.warning) == [
         "Session information is currently unavailable",
         f"Last known status: In Use at {local(P)}",
@@ -254,7 +262,8 @@ def test_ac5_unknown_shows_banner_last_known_status_and_frozen_durations():
 
 def test_ac6_fresh_install_unknown_shows_last_known_status_none():
     app = run(StubRuntime(unknownSnapshot([], None, failedAt=C), C))
-    assert shown(app.info)[0] == "Unknown"
+    assert statusBadge(app).label == "Unknown"
+    assert statusBadge(app).key == "statusBadgeBtn-neutral"
     assert shown(app.warning) == [
         "Session information is currently unavailable",
         "Last known status: none",
@@ -270,7 +279,8 @@ def test_ac7_recovery_removes_the_banner_on_the_next_refresh():
     runtime.stateStore.publish(healthySnapshot([alice()], P + timedelta(seconds=600)))
     app.run()
     assert not app.warning
-    assert shown(app.error) == ["[🔴 In Use — alice (192.168.1.20)](#active-sessions)"]
+    assert statusBadge(app).label == "🔴 In Use — alice (192.168.1.20)"
+    assert statusBadge(app).key == "statusBadgeBtn-error"
     assert shown(app.subheader) == ["Active sessions"]
     assert rows(app)[0][5] == "01:12:03"
 
@@ -479,7 +489,8 @@ def test_the_page_reads_only_config_clock_and_the_snapshot():
     # raises, which the page would report as a dashboard error.
     app = run(StubRuntime(healthySnapshot([alice()], C), C))
     assert not [e for e in app.error if "Dashboard error" in e.value]
-    assert shown(app.error) == ["[🔴 In Use — alice (192.168.1.20)](#active-sessions)"]
+    assert statusBadge(app).label == "🔴 In Use — alice (192.168.1.20)"
+    assert statusBadge(app).key == "statusBadgeBtn-error"
 
 
 def test_rendering_never_triggers_or_waits_for_a_poll(tmp_path):
@@ -502,7 +513,8 @@ def test_rendering_never_triggers_or_waits_for_a_poll(tmp_path):
         app = run(runtime)
         app.run()
         elapsed = time.monotonic() - started
-        assert shown(app.error) == ["[🔴 In Use — alice (192.168.1.20)](#active-sessions)"]
+        assert statusBadge(app).label == "🔴 In Use — alice (192.168.1.20)"
+        assert statusBadge(app).key == "statusBadgeBtn-error"
         assert rows(app)[0][0] == "alice"
         assert provider.callCount == 2  # the page started no poll of its own
         assert elapsed < 3, elapsed
@@ -517,14 +529,15 @@ def test_the_real_runtime_renders_its_published_snapshot(tmp_path):
     provider = FakeSessionProvider([osSession(2, "alice")])
     runtime = launcher.buildRuntime(tmp_path / "data", provider, FakeClock(C))
     app = run(runtime)
-    assert any(i.startswith("Unknown") for i in shown(app.info))
+    assert statusBadge(app).label.startswith("Unknown")
     assert shown(app.warning) == [
         "Session information is currently unavailable",
         "Last known status: none",
     ]
     runtime.pollOnce()
     app.run()
-    assert shown(app.error) == ["[🔴 In Use — alice (192.168.1.20)](#active-sessions)"]
+    assert statusBadge(app).label == "🔴 In Use — alice (192.168.1.20)"
+    assert statusBadge(app).key == "statusBadgeBtn-error"
     assert not app.warning
     assert rows(app)[0][:2] == ["alice", "RDP"]
 
@@ -591,3 +604,19 @@ def test_expand_and_collapse_all_controls():
     assert app.session_state.get("expander_active_open") is False
     assert app.session_state.get("expander_queue_open") is False
     assert app.session_state.get("expander_notes_open") is False
+
+
+def test_status_badge_click_expands_active_sessions():
+    app = run(StubRuntime(healthySnapshot([alice()], C), C))
+    assert app.session_state.get("expander_active_open") is not True
+    badge = statusBadge(app)
+    badge.click().run()
+    assert app.session_state.get("expander_active_open") is True
+
+
+def test_queue_badge_click_expands_queue_section():
+    app = run(StubRuntime(healthySnapshot([], C), C))
+    assert app.session_state.get("expander_queue_open") is not True
+    [queueBtn] = [b for b in app.button if b.key == "queueBadgeBtn"]
+    queueBtn.click().run()
+    assert app.session_state.get("expander_queue_open") is True

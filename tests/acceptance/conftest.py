@@ -154,11 +154,19 @@ class Page:
 
 def pageFrom(at: AppTest) -> Page:
     assert not at.exception, [e.value for e in at.exception]
-    rawBadges = [
-        (kind, unescape(element.value))
-        for kind, elements in (("success", at.success), ("error", at.error), ("info", at.info))
-        for element in elements
-    ]
+    rawBadges = []
+    for btn in at.button:
+        if btn.key and btn.key.startswith("statusBadgeBtn-"):
+            kind = btn.key.split("-", 1)[1]
+            if kind == "neutral":
+                kind = "info"
+            rawBadges.append((kind, unescape(btn.label)))
+    if not rawBadges:
+        rawBadges = [
+            (kind, unescape(element.value))
+            for kind, elements in (("success", at.success), ("error", at.error), ("info", at.info))
+            for element in elements
+        ]
     badges = [
         (kind, re.sub(r"^[🔴🟢]\s*", "", re.sub(r"\[(.*?)\]\(.*?\)", r"\1", text)))
         for kind, text in rawBadges

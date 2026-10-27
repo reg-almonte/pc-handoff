@@ -558,15 +558,18 @@ def statusRowColumnWeights(
     statusText: str,
     queueText: str,
     waitText: str,
-    targetTotal: float = 105.0,
+    targetTotal: float = 120.0,
 ) -> tuple[float, float, float, float]:
-    """Calculate proportional column weights so boxes hug content without looking stretched."""
-    wStatus = max(14.0, float(len(statusText) + 8))
-    wQueue = max(16.0, float(len(queueText) + 8))
-    wWait = max(20.0, float(len(waitText) + 8))
+    """Calculate [status, queue, flexSpacer, wait] column weights.
+
+    Boxes tightly hug content while the central flexSpacer absorbs remaining width.
+    """
+    wStatus = max(10.0, float(len(statusText) + 4))
+    wQueue = max(14.0, float(len(queueText) + 4))
+    wWait = max(18.0, float(len(waitText) + 4))
     contentSum = wStatus + wQueue + wWait
-    spacer = max(6.0, targetTotal - contentSum)
-    return (round(wStatus, 1), round(wQueue, 1), round(wWait, 1), round(spacer, 1))
+    spacer = max(10.0, targetTotal - contentSum)
+    return (round(wStatus, 1), round(wQueue, 1), round(spacer, 1), round(wWait, 1))
 
 
 def resolveRdpHost() -> str:

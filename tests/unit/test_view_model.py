@@ -552,8 +552,8 @@ class TestStatusRowColumnWeights:
         )
         # In Use column is significantly wider than Available column
         assert wInUse[0] > wAvailable[0]
-        # Spacer column absorbs remaining room
-        assert wAvailable[3] > wInUse[3]
-        # 4 elements: status, queue, wait, spacer
+        # Spacer column (index 2) absorbs remaining room
+        assert wAvailable[2] > wInUse[2]
+        # 4 elements: status, queue, flexSpacer, wait
         assert len(wAvailable) == 4
         assert len(wInUse) == 4
