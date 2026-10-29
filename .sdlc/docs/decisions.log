@@ -114,4 +114,22 @@ This ledger records architectural decisions, assumptions, and trade-offs for **P
   - Est. wait stays right-anchored while Status and Next in queue hug their content.
   - All automated tests pass (1,593 passing, 99.89% line coverage, 99.43% branch coverage). Zero `unsafe_allow_html`.
 
+## 2026-10-29 — DEC-016: Re-queue State Machine, Silent Handoff IP Correlation & Multi-Channel Notifications (`v0.3.4`)
+- **Context**: In operational use of `v0.3.3`, four user pain points were reported:
+  1. 5-minute queue expiration is too short; users want to queue overnight or avoid losing their spot if delayed.
+  2. Expired reservations disappear completely instead of staying in line.
+  3. Generic OS logins (e.g. `user`) cause blind spots; when an informal handoff happens, the user connects via RDP but the app times out the reservation as expired.
+  4. Host notifications do not pop up for active RDP users, and users lack external notifications (e.g. MS Teams).
+- **Decision**:
+  1. Add `claimGraceMinutes` (1–1440 min) to `config.json` defaulting to 60 minutes.
+  2. Implement `REQUEUED` state in the reservation state machine. When a `READY` reservation's claim grace window expires, move it to the tail of the active queue as `REQUEUED` (or retain alone if sole queued user), allowing turn rotation without forfeiting the slot.
+  3. Collect optional client IP during queue joining, store `ip -> displayName` in `data/known_users.json`, auto-claim `READY` reservations when an active RDP session from the matching IP connects, and enrich the status badge with real names: `🔴 In Use — Real Name (IP)`.
+  4. Fix host notifications using `msg.exe *` session broadcasting to all active sessions, support `"both"` method, and add a test notification button.
+  5. Integrate Microsoft Teams via Power Automate webhooks using standard library `urllib.request` dispatching Adaptive Cards asynchronously for queue join and handoff ready events with offline failure containment.
+- **Consequences**:
+  - Offline-first resilience is preserved with zero new pip dependencies.
+  - Solves the silent handoff and generic account blindspot.
+  - Queue slots survive overnight waiting and missed claim windows gracefully.
+
+
 
