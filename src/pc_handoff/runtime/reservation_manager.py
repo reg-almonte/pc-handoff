@@ -19,6 +19,7 @@ from pc_handoff.domain.reservations import (
     QueueState,
     Reservation,
     ReservationAuditEvent,
+    ReservationStatus,
     StatusNote,
     TransitionOutcome,
     emptyQueueState,
@@ -51,6 +52,7 @@ from pc_handoff.domain.tracker import TrackerState
 from pc_handoff.notifications.notifier import Notifier, NullNotifier
 from pc_handoff.persistence.activity_log_store import ActivityLogStore
 from pc_handoff.persistence.atomic import PersistenceError
+from pc_handoff.persistence.known_users_store import KnownUsersStore
 from pc_handoff.persistence.notices import StartupNotice
 from pc_handoff.persistence.paths import RESERVATIONS_FILE_NAME
 from pc_handoff.persistence.reservation_store import ReservationStore
@@ -71,6 +73,7 @@ class ReservationManager:
         onStateChanged: Callable[[QueueState, StartupNotice | None], None] | None = None,
         claimGraceSeconds: int = CLAIM_GRACE_SECONDS,
         notifier: Notifier | None = None,
+        knownUsersStore: KnownUsersStore | None = None,
     ) -> None:
         self._lock = threading.RLock()
         self.reservationStore = reservationStore
@@ -86,6 +89,7 @@ class ReservationManager:
         self._onStateChanged = onStateChanged
         self.claimGraceSeconds = claimGraceSeconds
         self.notifier: Notifier = NullNotifier() if notifier is None else notifier
+        self.knownUsersStore = knownUsersStore
 
     @property
     def lock(self) -> threading.RLock:
@@ -103,6 +107,7 @@ class ReservationManager:
         requestedDurationMinutes: int,
         *,
         notes: str | None = None,
+        clientAddress: str | None = None,
         pcAvailable: bool | None = None,
     ) -> Reservation:
         """Add a reservation for ``userName`` and immediately persist and publish."""
@@ -114,10 +119,13 @@ class ReservationManager:
                 requestedDurationMinutes,
                 now,
                 notes=notes,
+                clientAddress=clientAddress,
                 pcAvailable=self._resolvePcAvailable(pcAvailable),
                 claimGraceSeconds=self.claimGraceSeconds,
             )
             self._applyMutation(outcome)
+            if self.knownUsersStore is not None and clientAddress:
+                self.knownUsersStore.recordUser(clientAddress, userName)
             created = outcome.state.findByUser(userName)
             assert created is not None
             return created
@@ -186,6 +194,8 @@ class ReservationManager:
             self._applyMutation(outcome)
             claimed = outcome.state.findById(reservationId)
             assert claimed is not None
+            if self.knownUsersStore is not None and claimed.clientAddress:
+                self.knownUsersStore.recordUser(claimed.clientAddress, claimed.userName)
             return claimed
 
     def postStatusNote(
@@ -249,6 +259,10 @@ class ReservationManager:
             if outcome.state != self._state:
                 self._state = outcome.state
                 self._dirty = True
+                if self.knownUsersStore is not None:
+                    for res in self._state.reservations:
+                        if res.status is ReservationStatus.ACTIVE and res.clientAddress:
+                            self.knownUsersStore.recordUser(res.clientAddress, res.userName)
             self._pendingTickEvents = outcome.events
             return outcome
 

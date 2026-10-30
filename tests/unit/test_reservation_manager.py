@@ -23,6 +23,7 @@ from pc_handoff.notifications.notifier import HostNotification, formatEventNotif
 from pc_handoff.persistence import reservation_store
 from pc_handoff.persistence.activity_log_store import ActivityLogStore
 from pc_handoff.persistence.atomic import PersistenceError
+from pc_handoff.persistence.known_users_store import KnownUsersStore
 from pc_handoff.persistence.notices import StartupNotice
 from pc_handoff.persistence.paths import DataPaths
 from pc_handoff.persistence.reservation_store import ReservationStore
@@ -55,6 +56,7 @@ def makeManager(
     onStateChanged=None,
     claimGraceSeconds: int = 300,
     notifier=None,
+    knownUsersStore: KnownUsersStore | None = None,
 ) -> ReservationManager:
     logger = logging.getLogger("test.reservation_manager")
     resStore = ReservationStore(paths, clock, logger)
@@ -70,6 +72,7 @@ def makeManager(
         onStateChanged=onStateChanged,
         claimGraceSeconds=claimGraceSeconds,
         notifier=notifier,
+        knownUsersStore=knownUsersStore,
     )
 
 
@@ -269,15 +272,15 @@ class TestReservationManagerEvaluateTick:
         assert tickUnhealthy.events == ()
         assert mgr.currentState().findById(rAlice.reservationId).status is ReservationStatus.READY
 
-        # Advance past alice's 60s grace window -> alice EXPIRED, bob promoted to READY
+        # Advance past alice's 60s grace window -> alice REQUEUED to tail, bob promoted to READY
         clock.advance(60)
         tickExpire = mgr.evaluateTick(trackerState([], clock.now()), clock.now())
         assert [e.eventType for e in tickExpire.events] == [
-            ReservationEventType.RESERVATION_EXPIRED,
+            ReservationEventType.RESERVATION_REQUEUED,
             ReservationEventType.HANDOFF_INITIATED,
         ]
         assert mgr.currentState().findById(rAlice.reservationId).status is (
-            ReservationStatus.EXPIRED
+            ReservationStatus.REQUEUED
         )
         assert mgr.currentState().findById(rBob.reservationId).status is ReservationStatus.READY
 
@@ -375,3 +378,15 @@ class TestReservationManagerConcurrency:
         loaded = mgr.reservationStore.loadAtStartup()
         assert loaded.usable is True
         assert loaded.state == state
+
+    def test_reservation_manager_records_known_user(self, tmp_path: Path) -> None:
+        clock = FakeClock(T0)
+        paths = DataPaths(tmp_path)
+        knownStore = KnownUsersStore(paths, clock)
+        mgr = makeManager(paths, clock, knownUsersStore=knownStore)
+
+        # Enqueue with clientAddress
+        mgr.enqueueReservation("Alice Smith", 60, clientAddress="192.168.1.55", pcAvailable=True)
+        users = knownStore.load()
+        assert "192.168.1.55" in users
+        assert users["192.168.1.55"].displayName == "Alice Smith"

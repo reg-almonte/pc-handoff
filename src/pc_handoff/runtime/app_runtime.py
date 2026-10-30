@@ -115,6 +115,8 @@ class AppRuntime:
             maxlen=MAX_NOTICES,
         )
         assert startupContext.reservationStore is not None
+        claimGraceSeconds = startupContext.config.claimGraceMinutes * 60
+        self.knownUsersStore = startupContext.knownUsersStore
         self.reservationManager = ReservationManager(
             reservationStore=startupContext.reservationStore,
             activityStore=activityStore,
@@ -123,7 +125,9 @@ class AppRuntime:
             initialState=startupContext.queueState,
             isPcAvailable=self._isPcAvailable,
             onStateChanged=self._onReservationStateChanged,
+            claimGraceSeconds=claimGraceSeconds,
             notifier=notifier,
+            knownUsersStore=self.knownUsersStore,
         )
         self.publishState(self.trackerState)
 

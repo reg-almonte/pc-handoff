@@ -6,7 +6,7 @@ import subprocess
 from pathlib import Path
 
 from pc_handoff import launcher
-from pc_handoff.domain.reservations import CLAIM_GRACE_SECONDS, ReservationEventType
+from pc_handoff.domain.reservations import ReservationEventType
 from pc_handoff.notifications.windows_notifier import WindowsNotifier
 from tests.conftest import FAKE_CLOCK_START
 from tests.fakes import FakeClock, FakeSessionProvider
@@ -76,8 +76,8 @@ class TestHostNotificationAcceptance:
         assert len(dispatchedCommands) == 3
         assert "alice offered handoff to bob" in dispatchedCommands[2][3]
 
-        # 3. Bob's claim window expires -> RESERVATION_EXPIRED + Carol HANDOFF_INITIATED
-        clock.advance(CLAIM_GRACE_SECONDS + 1)
+        # 3. Bob's claim window expires -> RESERVATION_REQUEUED + Carol HANDOFF_INITIATED
+        clock.advance(runtime.reservationManager.claimGraceSeconds + 1)
         provider.setSessions([])
         runtime.pollOnce("t-2")
         assert len(dispatchedCommands) == 5

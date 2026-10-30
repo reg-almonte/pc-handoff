@@ -50,6 +50,7 @@ from pc_handoff.domain.tracker import PollOutcome, SessionTracker, TrackerState
 from pc_handoff.persistence.activity_log_store import ActivityLogStore
 from pc_handoff.persistence.atomic import cleanupTempFiles
 from pc_handoff.persistence.config_store import Config, ConfigLoadResult, loadConfig
+from pc_handoff.persistence.known_users_store import KnownUsersStore
 from pc_handoff.persistence.notices import StartupNotice
 from pc_handoff.persistence.paths import ACTIVITY_LOG_FILE_NAME, STATUS_FILE_NAME, DataPaths
 from pc_handoff.persistence.reservation_store import ReservationStore
@@ -91,6 +92,7 @@ class StartupContext:
     queueState: QueueState | None = None
     reservationsUsable: bool = False
     reservationStore: ReservationStore | None = None
+    knownUsersStore: KnownUsersStore | None = None
 
     @property
     def statusSessions(self) -> tuple[StatusSession, ...]:
@@ -119,6 +121,7 @@ def loadStartup(
     activityResult = activityStore.loadAtStartup()
     reservationStore = ReservationStore(paths, clock, logger)
     reservationResult = reservationStore.loadAtStartup()
+    knownUsersStore = KnownUsersStore(paths, clock)
 
     notices = tuple(
         n
@@ -166,6 +169,7 @@ def loadStartup(
         queueState=reservationResult.state,
         reservationsUsable=reservationResult.usable,
         reservationStore=reservationStore,
+        knownUsersStore=knownUsersStore,
     )
 
 

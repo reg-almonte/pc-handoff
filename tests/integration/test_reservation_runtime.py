@@ -8,7 +8,6 @@ import pytest
 
 from pc_handoff.domain.models import PcStatus
 from pc_handoff.domain.reservations import (
-    CLAIM_GRACE_SECONDS,
     HandoffStatus,
     NoteCategory,
     ReservationEventType,
@@ -114,11 +113,11 @@ class TestAppRuntimeReservationLifecycle:
         assert qState.handoff.status is HandoffStatus.OFFERED
         assert qState.handoff.targetUserName == "bob"
 
-        # Bob does not claim within CLAIM_GRACE_SECONDS -> poll cycle expires Bob and promotes Carol
-        clock.advance(CLAIM_GRACE_SECONDS + 1)
+        # Bob does not claim within claimGraceSeconds -> poll cycle re-queues Bob and promotes Carol
+        clock.advance(runtime.reservationManager.claimGraceSeconds + 1)
         assert runtime.pollOnce("t-bob-timeout") == POLL_OK
         qState = runtime.stateStore.current().queueState
-        assert qState.findById(rBob.reservationId).status is ReservationStatus.EXPIRED
+        assert qState.findById(rBob.reservationId).status is ReservationStatus.REQUEUED
         assert qState.findById(rCarol.reservationId).status is ReservationStatus.READY
         assert qState.handoff.targetUserName == "carol"
 
@@ -141,7 +140,7 @@ class TestAppRuntimeReservationLifecycle:
         persistedRes = readReservations(dataDir)
         statusesById = {r["reservationId"]: r["status"] for r in persistedRes["reservations"]}
         assert statusesById == {
-            rBob.reservationId: "EXPIRED",
+            rBob.reservationId: "READY",
             rCarol.reservationId: "COMPLETED",
         }
         eventTypes = [e["eventType"] for e in readEvents(dataDir)]
@@ -152,11 +151,12 @@ class TestAppRuntimeReservationLifecycle:
             ReservationEventType.RESERVATION_UPDATED.value,
             "session_end",
             ReservationEventType.HANDOFF_INITIATED.value,
-            ReservationEventType.RESERVATION_EXPIRED.value,
+            ReservationEventType.RESERVATION_REQUEUED.value,
             ReservationEventType.HANDOFF_INITIATED.value,
             "session_start",
             ReservationEventType.HANDOFF_CLAIMED.value,
             "session_end",
+            ReservationEventType.HANDOFF_INITIATED.value,
         ]
 
     def test_runtime_wires_notifier_for_ui_mutations_and_poller_ticks(
@@ -210,14 +210,14 @@ class TestAppRuntimeReservationLifecycle:
         ]
         assert notified[-1].reservationId == rBob.reservationId
 
-        # Bob expires -> RESERVATION_EXPIRED andCarol's HANDOFF_INITIATED notified
-        clock.advance(CLAIM_GRACE_SECONDS + 1)
+        # Bob re-queues -> RESERVATION_REQUEUED and Carol's HANDOFF_INITIATED notified
+        clock.advance(runtime.reservationManager.claimGraceSeconds + 1)
         assert runtime.pollOnce("t-3") == POLL_OK
         assert [n.eventType for n in notified] == [
             ReservationEventType.RESERVATION_QUEUED,
             ReservationEventType.RESERVATION_QUEUED,
             ReservationEventType.HANDOFF_INITIATED,
-            ReservationEventType.RESERVATION_EXPIRED,
+            ReservationEventType.RESERVATION_REQUEUED,
             ReservationEventType.HANDOFF_INITIATED,
         ]
         assert notified[-1].reservationId == rCarol.reservationId

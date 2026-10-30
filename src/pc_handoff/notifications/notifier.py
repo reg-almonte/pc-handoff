@@ -103,7 +103,10 @@ def formatEventNotification(
             reservationId=event.reservationId,
         )
 
-    if event.eventType is ReservationEventType.RESERVATION_EXPIRED:
+    if event.eventType in (
+        ReservationEventType.RESERVATION_EXPIRED,
+        ReservationEventType.RESERVATION_REQUEUED,
+    ):
         nextReady = state.readyReservation if state is not None else None
         if nextReady is not None and nextReady.reservationId != event.reservationId:
             nextUser = sanitizeNotificationText(nextReady.userName)

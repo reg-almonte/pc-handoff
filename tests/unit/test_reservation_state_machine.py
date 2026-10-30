@@ -440,22 +440,97 @@ def test_evaluate_tick_expires_ready_and_advances_next_queued() -> None:
     aliceId = s2.reservations[0].reservationId
     bobId = s2.reservations[1].reservationId
 
-    # At t = 6 min (past 5-min grace window from t = 1 min), Alice expires and Bob becomes READY.
+    # At t = 6 min (past 5-min grace window from t = 1 min), Alice re-queues to tail
+    # and Bob becomes READY.
     out1 = evaluateTick(s2, [], pcAvailable=True, now=at(6))
-    assert out1.state.findById(aliceId).status is ReservationStatus.EXPIRED
+    assert out1.state.findById(aliceId).status is ReservationStatus.REQUEUED
+    assert out1.state.findById(aliceId).claimExpiresAt is None
     assert out1.state.findById(bobId).status is ReservationStatus.READY
     assert out1.state.handoff.status is HandoffStatus.OFFERED
     assert out1.state.handoff.targetUserName == "bob"
     assert [e.eventType for e in out1.events] == [
-        ReservationEventType.RESERVATION_EXPIRED,
+        ReservationEventType.RESERVATION_REQUEUED,
+        ReservationEventType.HANDOFF_INITIATED,
+    ]
+    assert [r.userName for r in out1.state.nonTerminalReservations] == ["bob", "alice"]
+
+    # At t = 12 min, Bob also expires -> Bob re-queues to tail, Alice becomes READY again!
+    out2 = evaluateTick(out1.state, [], pcAvailable=True, now=at(12))
+    assert out2.state.findById(bobId).status is ReservationStatus.REQUEUED
+    assert out2.state.findById(bobId).claimExpiresAt is None
+    assert out2.state.findById(aliceId).status is ReservationStatus.READY
+    assert out2.state.handoff.status is HandoffStatus.OFFERED
+    assert out2.state.handoff.targetUserName == "alice"
+    assert [e.eventType for e in out2.events] == [
+        ReservationEventType.RESERVATION_REQUEUED,
         ReservationEventType.HANDOFF_INITIATED,
     ]
 
-    # At t = 12 min, Bob also expires and no one else is queued -> handoff stays TIMED_OUT.
-    out2 = evaluateTick(out1.state, [], pcAvailable=True, now=at(12))
-    assert out2.state.findById(bobId).status is ReservationStatus.EXPIRED
-    assert out2.state.handoff.status is HandoffStatus.TIMED_OUT
-    assert [e.eventType for e in out2.events] == [ReservationEventType.RESERVATION_EXPIRED]
+
+def test_evaluate_tick_single_user_requeue_alone() -> None:
+    # Single reservation in READY state
+    s1 = enqueueReservation(
+        emptyQueueState(at(0)),
+        "alice",
+        60,
+        at(0),
+        pcAvailable=True,
+        claimGraceSeconds=300,
+    ).state
+    aliceId = s1.reservations[0].reservationId
+    assert s1.reservations[0].status is ReservationStatus.READY
+
+    # At t = 6 min (past 5 min), single user expires -> updates to REQUEUED, stays alone in queue
+    out = evaluateTick(s1, [], pcAvailable=True, now=at(6), claimGraceSeconds=300)
+    alice = out.state.findById(aliceId)
+    assert alice.status is ReservationStatus.REQUEUED
+    assert alice.claimExpiresAt is None
+    assert out.state.handoff.status is HandoffStatus.TIMED_OUT
+    assert out.state.queuedReservations[0].reservationId == aliceId
+    assert [e.eventType for e in out.events] == [ReservationEventType.RESERVATION_REQUEUED]
+
+
+def test_evaluate_tick_ip_autoclaim_for_ready_and_queued() -> None:
+    # Alice enqueues with client IP 192.168.1.100 and is READY
+    s1 = enqueueReservation(
+        emptyQueueState(at(0)),
+        "alice",
+        60,
+        at(0),
+        clientAddress="192.168.1.100",
+        pcAvailable=True,
+    ).state
+    aliceId = s1.reservations[0].reservationId
+    assert s1.findById(aliceId).status is ReservationStatus.READY
+
+    # Active session logs in with generic OS user 'operator' but matching client IP
+    sess = replace(makeSession("operator"), clientAddress="192.168.1.100")
+    out = evaluateTick(s1, [sess], pcAvailable=False, now=at(1))
+    assert out.state.findById(aliceId).status is ReservationStatus.ACTIVE
+    assert out.state.activeReservation.reservationId == aliceId
+    assert out.state.handoff.status is HandoffStatus.CLAIMED
+    assert [e.eventType for e in out.events] == [ReservationEventType.HANDOFF_CLAIMED]
+
+
+def test_evaluate_tick_ip_autoclaim_head_queued() -> None:
+    # Bob is queued with IP 192.168.1.101 while PC is busy
+    s1 = enqueueReservation(
+        emptyQueueState(at(0)),
+        "bob",
+        60,
+        at(0),
+        clientAddress="192.168.1.101",
+        pcAvailable=False,
+    ).state
+    bobId = s1.reservations[0].reservationId
+    assert s1.findById(bobId).status is ReservationStatus.QUEUED
+
+    # Bob connects directly via RDP with generic user 'labuser'
+    sess = replace(makeSession("labuser"), clientAddress="192.168.1.101")
+    out = evaluateTick(s1, [sess], pcAvailable=False, now=at(1))
+    assert out.state.findById(bobId).status is ReservationStatus.ACTIVE
+    assert out.state.activeReservation.reservationId == bobId
+    assert [e.eventType for e in out.events] == [ReservationEventType.HANDOFF_CLAIMED]
 
 
 def test_evaluate_tick_prunes_expired_status_notes() -> None:
