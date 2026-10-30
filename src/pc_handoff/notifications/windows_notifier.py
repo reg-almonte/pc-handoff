@@ -24,12 +24,14 @@ from pc_handoff.domain.reservations import (
     ReservationAuditEvent,
 )
 from pc_handoff.notifications.notifier import (
+    CompositeNotifier,
     HostNotification,
     Notifier,
     NullNotifier,
     formatEventNotification,
     sanitizeNotificationText,
 )
+from pc_handoff.notifications.teams_notifier import TeamsNotifier
 from pc_handoff.persistence.config_store import (
     DEFAULT_HOST_NOTIFICATION_METHOD,
     DEFAULT_HOST_NOTIFICATION_TIMEOUT_SECONDS,
@@ -184,52 +186,56 @@ class WindowsNotifier:
             self._executor.shutdown(wait=False, cancel_futures=True)
             self._executor = None
 
-    def _buildCommand(self, notification: HostNotification) -> list[str] | None:
-        if self.method == "toast":
-            return buildToastCommand(notification.title, notification.body)
-        if self.method == "msg":
-            return buildMsgCommand(
-                notification.title,
-                notification.body,
-                self.timeoutSeconds,
+    def _buildCommands(self, notification: HostNotification) -> list[list[str]]:
+        commands: list[list[str]] = []
+        if self.method in ("msg", "both"):
+            commands.append(
+                buildMsgCommand(
+                    notification.title,
+                    notification.body,
+                    self.timeoutSeconds,
+                )
             )
-        return None
+        if self.method in ("toast", "both"):
+            commands.append(buildToastCommand(notification.title, notification.body))
+        return commands
 
     def _dispatchSync(self, notification: HostNotification) -> None:
-        command = self._buildCommand(notification)
-        if command is None:
-            return
-        try:
-            completed = self._runner(
-                command,
-                capture_output=True,
-                text=True,
-                timeout=self.timeoutSeconds,
-                check=False,
-            )
-            returncode = getattr(completed, "returncode", 0)
-            if returncode != 0:
-                stderr = getattr(completed, "stderr", "") or ""
+        commands = self._buildCommands(notification)
+        for command in commands:
+            try:
+                completed = self._runner(
+                    command,
+                    capture_output=True,
+                    text=True,
+                    timeout=self.timeoutSeconds,
+                    check=False,
+                )
+                returncode = getattr(completed, "returncode", 0)
+                if returncode != 0:
+                    stderr = getattr(completed, "stderr", "") or ""
+                    self.logger.warning(
+                        "host notification command exited with non-zero status",
+                        extra={
+                            "detail": {
+                                "method": self.method,
+                                "command": command[0],
+                                "returncode": returncode,
+                                "stderr": stderr.strip(),
+                            }
+                        },
+                    )
+            except Exception as exc:
                 self.logger.warning(
-                    "host notification command exited with non-zero status",
+                    "host notification delivery failed",
                     extra={
                         "detail": {
                             "method": self.method,
-                            "returncode": returncode,
-                            "stderr": stderr.strip(),
+                            "command": command[0] if command else "unknown",
+                            "error": f"{type(exc).__name__}: {exc}",
                         }
                     },
                 )
-        except Exception as exc:
-            self.logger.warning(
-                "host notification delivery failed",
-                extra={
-                    "detail": {
-                        "method": self.method,
-                        "error": f"{type(exc).__name__}: {exc}",
-                    }
-                },
-            )
 
 
 def createNotifier(
@@ -238,17 +244,40 @@ def createNotifier(
     *,
     claimGraceSeconds: int = CLAIM_GRACE_SECONDS,
     runner: Callable[..., Any] = _defaultRunner,
+    teamsSender: Callable[..., Any] | None = None,
     asyncDispatch: bool = True,
 ) -> Notifier:
-    """Create a configured ``Notifier`` from ``Config``."""
-    if not config.enableHostNotifications or config.hostNotificationMethod == "none":
+    """Create configured host and Teams notifiers according to ``Config``."""
+    notifiers: list[Notifier] = []
+
+    if config.enableHostNotifications and config.hostNotificationMethod != "none":
+        notifiers.append(
+            WindowsNotifier(
+                logger=logger,
+                enabled=config.enableHostNotifications,
+                method=config.hostNotificationMethod,
+                timeoutSeconds=config.hostNotificationTimeoutSeconds,
+                claimGraceSeconds=claimGraceSeconds,
+                runner=runner,
+                asyncDispatch=asyncDispatch,
+            )
+        )
+
+    if config.enableTeamsNotifications and config.teamsWebhookUrl:
+        notifiers.append(
+            TeamsNotifier(
+                webhookUrl=config.teamsWebhookUrl,
+                logger=logger,
+                enabled=config.enableTeamsNotifications,
+                timeoutSeconds=config.hostNotificationTimeoutSeconds,
+                claimGraceSeconds=claimGraceSeconds,
+                sender=teamsSender,
+                asyncDispatch=asyncDispatch,
+            )
+        )
+
+    if not notifiers:
         return NullNotifier()
-    return WindowsNotifier(
-        logger=logger,
-        enabled=config.enableHostNotifications,
-        method=config.hostNotificationMethod,
-        timeoutSeconds=config.hostNotificationTimeoutSeconds,
-        claimGraceSeconds=claimGraceSeconds,
-        runner=runner,
-        asyncDispatch=asyncDispatch,
-    )
+    if len(notifiers) == 1:
+        return notifiers[0]
+    return CompositeNotifier(notifiers)
