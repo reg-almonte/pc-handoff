@@ -60,8 +60,39 @@ class NullNotifier:
     ) -> None:
         return None
 
+    def flush(self, timeout: float = 5.0) -> None:
+        return None
+
     def close(self) -> None:
         return None
+
+
+class CompositeNotifier:
+    """Delegates notification calls across multiple underlying notifiers."""
+
+    def __init__(self, notifiers: Sequence[Notifier]) -> None:
+        self.notifiers = tuple(notifiers)
+
+    def notify(self, notification: HostNotification) -> None:
+        for n in self.notifiers:
+            n.notify(notification)
+
+    def notifyEvents(
+        self,
+        events: Sequence[ReservationAuditEvent],
+        state: QueueState | None = None,
+    ) -> None:
+        for n in self.notifiers:
+            n.notifyEvents(events, state)
+
+    def flush(self, timeout: float = 5.0) -> None:
+        for n in self.notifiers:
+            if hasattr(n, "flush"):
+                n.flush(timeout=timeout)
+
+    def close(self) -> None:
+        for n in self.notifiers:
+            n.close()
 
 
 def formatEventNotification(

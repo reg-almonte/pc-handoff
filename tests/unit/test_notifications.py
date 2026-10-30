@@ -19,6 +19,7 @@ from pc_handoff.domain.reservations import (
     newStatusNoteEvent,
 )
 from pc_handoff.notifications import (
+    CompositeNotifier,
     HostNotification,
     Notifier,
     NullNotifier,
@@ -28,6 +29,7 @@ from pc_handoff.notifications import (
     createNotifier,
     formatEventNotification,
 )
+from pc_handoff.notifications.teams_notifier import TeamsNotifier, buildTeamsAdaptiveCard
 from pc_handoff.persistence.config_store import Config
 
 TZ = timezone(timedelta(hours=9))
@@ -287,3 +289,119 @@ def test_default_runner_uses_noop_in_pytest_and_invokes_monkeypatched_subprocess
     monkeypatch.setattr(subprocess, "run", fakeSubprocessRun)
     nDefault.notify(HostNotification(title="T", body="B"))
     assert len(recorded) == 1
+
+
+def test_windows_notifier_both_method_executes_msg_and_toast() -> None:
+    logger = logging.getLogger("pc_handoff.notifications")
+    dispatched: list[list[str]] = []
+
+    def fakeRunner(cmd: list[str], **kwargs: Any) -> subprocess.CompletedProcess[str]:
+        dispatched.append(cmd)
+        return subprocess.CompletedProcess(cmd, 0, stdout="", stderr="")
+
+    notifier = WindowsNotifier(
+        logger,
+        method="both",
+        timeoutSeconds=15,
+        runner=fakeRunner,
+        asyncDispatch=False,
+    )
+    notifier.notify(HostNotification(title="Queue Alert", body="Alice is ready"))
+    assert len(dispatched) == 2
+    assert dispatched[0][0] == "msg.exe"
+    assert "/time:15" in dispatched[0]
+    assert dispatched[1][0] == "powershell.exe"
+
+
+def test_teams_notifier_builds_card_and_filters_events() -> None:
+    card = buildTeamsAdaptiveCard("PC Ready", "Bob can claim")
+    assert card["type"] == "message"
+    assert card["attachments"][0]["content"]["body"][0]["text"] == "PC Ready"
+    assert card["attachments"][0]["content"]["body"][1]["text"] == "Bob can claim"
+
+    logger = logging.getLogger("pc_handoff.notifications")
+    sent_payloads: list[dict[str, Any]] = []
+
+    def fakeSender(url: str, data: bytes, timeout: float) -> None:
+        import json
+
+        sent_payloads.append(json.loads(data.decode("utf-8")))
+
+    teams = TeamsNotifier(
+        webhookUrl="https://example.com/webhook",
+        logger=logger,
+        enabled=True,
+        sender=fakeSender,
+        asyncDispatch=False,
+    )
+
+    # 1. Triggered events: QUEUED and HANDOFF_INITIATED
+    res = makeRes("Bob")
+    evQueued = newReservationEvent(res, ReservationEventType.RESERVATION_QUEUED, T0)
+    evReady = newReservationEvent(res, ReservationEventType.HANDOFF_INITIATED, T0)
+    evCancelled = newReservationEvent(res, ReservationEventType.RESERVATION_CANCELLED, T0)
+
+    teams.notifyEvents([evQueued, evReady, evCancelled])
+    assert len(sent_payloads) == 2
+    assert "Queue Joined" in sent_payloads[0]["attachments"][0]["content"]["body"][0]["text"]
+    assert "Ready to Claim" in sent_payloads[1]["attachments"][0]["content"]["body"][0]["text"]
+
+
+def test_teams_notifier_failure_containment_and_async(
+    capturedAppLog: Callable[[], list[dict[str, Any]]],
+) -> None:
+    logger = logging.getLogger("pc_handoff.notifications")
+
+    def failingSender(url: str, data: bytes, timeout: float) -> None:
+        raise OSError("network down")
+
+    teams = TeamsNotifier(
+        webhookUrl="https://example.com/webhook",
+        logger=logger,
+        enabled=True,
+        sender=failingSender,
+        asyncDispatch=True,
+    )
+    teams.notify(HostNotification(title="Alert", body="Test"))
+    teams.flush()
+    teams.close()
+
+    warnings = [line["message"] for line in capturedAppLog() if line["level"] == "WARNING"]
+    assert "teams notification dispatch failed" in warnings
+
+
+def test_create_notifier_composite_wiring() -> None:
+    logger = logging.getLogger("pc_handoff.notifications")
+
+    # Both host and teams enabled -> CompositeNotifier
+    cfg = Config(
+        enableHostNotifications=True,
+        hostNotificationMethod="both",
+        enableTeamsNotifications=True,
+        teamsWebhookUrl="https://example.com/webhook",
+    )
+    notifier = createNotifier(cfg, logger, asyncDispatch=False)
+    assert isinstance(notifier, CompositeNotifier)
+    assert len(notifier.notifiers) == 2
+    notifier.flush()
+    notifier.close()
+
+    # Only teams enabled
+    cfgTeamsOnly = Config(
+        enableHostNotifications=False,
+        enableTeamsNotifications=True,
+        teamsWebhookUrl="https://example.com/webhook",
+    )
+    nTeams = createNotifier(cfgTeamsOnly, logger, asyncDispatch=False)
+    assert isinstance(nTeams, TeamsNotifier)
+    nTeams.close()
+
+    # Neither enabled
+    cfgNone = Config(
+        enableHostNotifications=False,
+        enableTeamsNotifications=False,
+    )
+    nNone = createNotifier(cfgNone, logger)
+    assert isinstance(nNone, NullNotifier)
+    nNone.flush()
+    nNone.close()
