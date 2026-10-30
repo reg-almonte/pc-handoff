@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "pc-handoff"
-version = "0.1.0"
+version = "0.3.4"
 description = "Shared PC status monitoring: session detection, local JSON persistence and a Streamlit status dashboard."
 readme = "README.md"
 requires-python = ">=3.11"

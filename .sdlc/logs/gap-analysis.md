@@ -6,44 +6,7 @@ This document compares the goals and core capabilities outlined in [docs/project
 
 ## Currently Missing Functionalities
 
-### 1. Reservation Queue Management
-- **Description**: Managing a queue of users waiting to use the shared PC.
-- **Missing Elements**:
-  - Queue data model, validation schemas, and persistence mechanism.
-  - UI components for viewing who is waiting and their queue position.
-  - Queue transition logic (position tracking, expiration, queue advance when the PC becomes available).
-
-### 2. Self-Service Reservation Management
-- **Description**: Enabling users on the LAN to manage their own reservations.
-- **Missing Elements**:
-  - UI controls for joining the waiting list / reserving an upcoming slot.
-  - Functionality for users to cancel, modify, or release their reservation or queue slot.
-
-### 3. Structured Ownership Handoff Workflow
-- **Description**: A formal process guiding transitions between the current active user and the next user in line.
-- **Missing Elements**:
-  - Handover request / release state machine.
-  - Ready-to-yield prompts, acknowledgment workflows, and timeout/grace-period handling.
-
-### 4. User-to-User Status Messaging
-- **Description**: Direct lightweight messaging between current connected users and waiting users.
-- **Missing Elements**:
-  - Broadcast or direct status messages (e.g., "Finishing up tests in 10 minutes", "Please log off when ready").
-  - UI display for active messages and announcements on the dashboard.
-
-### 5. Microsoft Teams Notification Integration
-- **Description**: Automated webhook / chat alerts to notify team members about status and queue events.
-- **Missing Elements**:
-  - Configurable Teams webhook URL settings in `config.json`.
-  - Notification dispatch triggers:
-    - Alerting the active user when someone joins the queue.
-    - Alerting the next user in the queue when the PC becomes `Available`.
-    - Alerting users upon handoff requests or cancellations.
-
-### 6. Reservation & Handoff Audit Trail
-- **Description**: Historical logging of reservations and handoff events.
-- **Missing Elements**:
-  - While RDP session connects/disconnects are logged in `activity_log.json`, events for reservations created/cancelled and handoff events are not yet captured or audited.
+*(None — All core capabilities specified across REQ-001 through REQ-004 have been fully implemented and verified.)*
 
 ---
 
@@ -59,5 +22,8 @@ This document compares the goals and core capabilities outlined in [docs/project
 | **Self-service reservation management** | Implemented | Dedicated Manage View with 3 semantic tabs, queue slot editing & cancellation (`REQ-002`, `REQ-003`) |
 | **Ownership handoff workflow** | Implemented | 5-min grace period countdown, RDP auto-claim correlation, and `.rdp` file generator (`REQ-002`, `REQ-003`) |
 | **User-to-user status messaging** | Implemented | TTL-bounded broadcast status notes with semantic category tags (`REQ-002`, `REQ-003`) |
-| **Host PC notification integration** | Implemented | Zero-dependency Windows Toast (WinRT) & `msg.exe` terminal broadcast alerts (`REQ-003`, `DEC-011`) |
-| **Reservation audit logging** | Implemented | Full lifecycle & slot-update events recorded in `activity_log.json` (`REQ-002`, `REQ-003`) |
+| **Host PC notification integration** | Implemented | Zero-dependency Windows Toast (WinRT) & `msg.exe` terminal broadcast alerts (`REQ-003`, `REQ-004`, `DEC-011`, `DEC-016`) |
+| **Microsoft Teams notification integration** | Implemented | Zero-dependency Power Automate webhook integration sending Adaptive Cards on queue join & handoff ready (`REQ-004`, `DEC-016`) |
+| **Configurable Queue Expiration & Re-queueing** | Implemented | `claimGraceMinutes` (1–1440 min) and rotating expired claims to `REQUEUED` status at queue tail (`REQ-004`, `DEC-016`) |
+| **Client IP Silent Handoff Correlation** | Implemented | Optional client IP registration, `known_users.json` directory, auto-claim on RDP connect, and Real Name status badge enrichment (`REQ-004`, `DEC-016`) |
+| **Reservation audit logging** | Implemented | Full lifecycle & slot-update events recorded in `activity_log.json` (`REQ-002`, `REQ-003`, `REQ-004`) |

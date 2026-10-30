@@ -53,27 +53,27 @@ graph TD
   - Branch: `feature/task025-v034-spec-and-plan`
   - Deliverables: `SD003_System_Design_v0.3.md`, `PLAN-003-queue-requeue-correlation-and-teams.md`, `DEC-016` in `decisions.log`.
 
-- [ ] **`TASK-026`**: Configurable Grace Period, REQUEUED State & Known Users Directory
+- [x] **`TASK-026`**: Configurable Grace Period, REQUEUED State & Known Users Directory
   - Branch: `feature/task026-config-requeue-and-known-users`
   - Deliverables:
     - Add `claimGraceMinutes` (1–1440 min, default 60), `enableTeamsNotifications`, and `teamsWebhookUrl` to `config_store.py`.
     - Add `REQUEUED` to `ReservationStatus` and `RESERVATION_REQUEUED` to `ReservationEventType`.
     - Implement `KnownUsersStore` with atomic persistence to `data/known_users.json`.
 
-- [ ] **`TASK-027`**: Re-queue State Machine & Silent Handoff IP Auto-Claim
+- [x] **`TASK-027`**: Re-queue State Machine & Silent Handoff IP Auto-Claim
   - Branch: `feature/task027-requeue-and-ip-autoclaim`
   - Deliverables:
     - Pure transition functions in `reservations.py` for re-queueing to tail of queue.
     - Poller correlation in `reservation_manager.py`: auto-claim when an active session IP matches the `READY` reservation's client address.
 
-- [ ] **`TASK-028`**: Multi-Channel Host Broadcast & MS Teams Webhook Notifier
+- [x] **`TASK-028`**: Multi-Channel Host Broadcast & MS Teams Webhook Notifier
   - Branch: `feature/task028-host-broadcast-and-teams-webhook`
   - Deliverables:
     - Enhance `WindowsNotifier` with `"both"` method using `msg.exe *` for all active sessions.
     - Implement `TeamsNotifier` using `urllib.request` dispatching Adaptive Cards asynchronously with full failure containment.
     - Wire composite notifier in `launcher.py` and `app_runtime.py`.
 
-- [ ] **`TASK-029`**: UI Enhancements: IP Input, Re-queued Badges, Test Notification Button
+- [x] **`TASK-029`**: UI Enhancements: IP Input, Re-queued Badges, Test Notification Button
   - Branch: `feature/task029-ui-ip-input-and-test-button`
   - Deliverables:
     - Manage View: add optional Client IP field to Join Queue form with auto-detection/pre-fill.
@@ -81,7 +81,7 @@ graph TD
     - Status View: enrich status badge with Real Name: `🔴 In Use — Real Name (IP)`.
     - Display `🔄 Re-queued` badge in reservation queue table.
 
-- [ ] **`TASK-030`**: Acceptance Tests, End-to-End Verification & Release v0.3.4
+- [x] **`TASK-030`**: Acceptance Tests, End-to-End Verification & Release v0.3.4
   - Branch: `feature/task030-v034-acceptance-and-release`
   - Deliverables:
     - Acceptance tests for re-queueing, IP auto-claim, Teams webhook payload, and host notification.
