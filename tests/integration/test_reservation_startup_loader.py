@@ -98,13 +98,13 @@ def test_load_startup_reconciles_expired_ready_and_completed_active_after_downti
     pollOutcome = reconcileStartup(ctx, tracker, [], T0)
     resOutcome = reconcileReservationsAtStartup(ctx, pollOutcome.state, T0)
 
-    # Alice's READY slot expired during downtime; Bob is promoted to READY.
+    # Alice's READY slot expired during downtime; Alice is REQUEUED and Bob is promoted to READY.
     aliceId = s2.reservations[0].reservationId
     bobId = s2.reservations[1].reservationId
-    assert resOutcome.state.findById(aliceId).status is ReservationStatus.EXPIRED
+    assert resOutcome.state.findById(aliceId).status is ReservationStatus.REQUEUED
     assert resOutcome.state.findById(bobId).status is ReservationStatus.READY
     assert [e.eventType for e in resOutcome.events] == [
-        ReservationEventType.RESERVATION_EXPIRED,
+        ReservationEventType.RESERVATION_REQUEUED,
         ReservationEventType.HANDOFF_INITIATED,
     ]
     assert all(e.reason is EventReason.DETECTED_AT_STARTUP for e in resOutcome.events)

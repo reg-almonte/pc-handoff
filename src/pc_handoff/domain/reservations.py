@@ -323,13 +323,20 @@ class QueueState:
     @property
     def readyReservation(self) -> Reservation | None:
         for res in self.reservations:
-            if res.status is ReservationStatus.READY:
+            if res.status is ReservationStatus.READY or (
+                res.status is ReservationStatus.REQUEUED and res.claimExpiresAt is not None
+            ):
                 return res
         return None
 
     @property
     def queuedReservations(self) -> tuple[Reservation, ...]:
-        return tuple(r for r in self.reservations if r.status is ReservationStatus.QUEUED)
+        return tuple(
+            r
+            for r in self.reservations
+            if r.status is ReservationStatus.QUEUED
+            or (r.status is ReservationStatus.REQUEUED and r.claimExpiresAt is None)
+        )
 
     @property
     def nonTerminalReservations(self) -> tuple[Reservation, ...]:
@@ -542,10 +549,15 @@ def _promoteHeadQueued(
     offeredByUserName: str | None,
     claimGraceSeconds: int,
     reason: EventReason,
+    excludeReservationId: str | None = None,
 ) -> tuple[list[Reservation], HandoffState, list[ReservationAuditEvent]]:
-    """Promote the first ``QUEUED`` reservation to ``READY``."""
+    """Promote the first waiting (QUEUED or REQUEUED) reservation to READY."""
     for index, res in enumerate(reservations):
-        if res.status is ReservationStatus.QUEUED:
+        if (
+            res.status in (ReservationStatus.QUEUED, ReservationStatus.REQUEUED)
+            and res.claimExpiresAt is None
+            and (excludeReservationId is None or res.reservationId != excludeReservationId)
+        ):
             expiresAt = now + timedelta(seconds=claimGraceSeconds)
             promoted = replace(
                 res,
@@ -673,7 +685,9 @@ def estimateWaitMinutes(
         target = state.findById(reservationId)
         if target is None or target.status.isTerminal:
             raise ValueError(f"active or queued reservation not found: {reservationId!r}")
-        if target.status in (ReservationStatus.ACTIVE, ReservationStatus.READY):
+        if target.status in (ReservationStatus.ACTIVE, ReservationStatus.READY) or (
+            target.status is ReservationStatus.REQUEUED and target.claimExpiresAt is not None
+        ):
             return 0
 
     total = 0
@@ -711,10 +725,13 @@ def updateReservation(
     *,
     notes: str | None = None,
 ) -> TransitionOutcome:
-    """Update ``requestedDurationMinutes`` and ``notes`` on a ``QUEUED`` reservation without
+    """Update ``requestedDurationMinutes`` and ``notes`` on a waiting reservation without
     forfeiting its position in the queue (SD002 section 5.2)."""
     target = state.findById(reservationId)
-    if target is None or target.status is not ReservationStatus.QUEUED:
+    if target is None or target.status not in (
+        ReservationStatus.QUEUED,
+        ReservationStatus.REQUEUED,
+    ):
         raise ValueError(f"queued reservation not found: {reservationId!r}")
 
     cleanDuration = validateDurationMinutes(requestedDurationMinutes)
@@ -763,13 +780,18 @@ def cancelReservation(
         newReservationEvent(cancelled, ReservationEventType.RESERVATION_CANCELLED, now)
     ]
 
-    wasReadyOrActive = target.status in (ReservationStatus.READY, ReservationStatus.ACTIVE)
+    wasReadyOrActive = target.status in (
+        ReservationStatus.READY,
+        ReservationStatus.ACTIVE,
+    ) or (target.status is ReservationStatus.REQUEUED and target.claimExpiresAt is not None)
     handoff = state.handoff
     if state.handoff.reservationId == reservationId:
         handoff = HandoffState.idle()
 
     if (wasReadyOrActive or pcAvailable) and not any(
-        r.status in (ReservationStatus.ACTIVE, ReservationStatus.READY) for r in working
+        r.status in (ReservationStatus.ACTIVE, ReservationStatus.READY)
+        or (r.status is ReservationStatus.REQUEUED and r.claimExpiresAt is not None)
+        for r in working
     ):
         working, handoff, promoEvents = _promoteHeadQueued(
             working,
@@ -817,7 +839,15 @@ def initiateHandoff(
             working.append(res)
 
     events: list[ReservationAuditEvent] = []
-    ready = next((r for r in working if r.status is ReservationStatus.READY), None)
+    ready = next(
+        (
+            r
+            for r in working
+            if r.status is ReservationStatus.READY
+            or (r.status is ReservationStatus.REQUEUED and r.claimExpiresAt is not None)
+        ),
+        None,
+    )
     if ready is not None:
         expiresAt = now + timedelta(seconds=claimGraceSeconds)
         refreshed = replace(ready, readyAt=now, claimExpiresAt=expiresAt)
@@ -868,15 +898,26 @@ def claimHandoff(
     *,
     reason: EventReason = EventReason.OBSERVED,
 ) -> TransitionOutcome:
-    """Claim a ``READY`` reservation (or head ``QUEUED`` when none is active/ready) into
+    """Claim a ``READY`` reservation (or head waiting when none is active/ready) into
     ``ACTIVE``."""
     target = state.findById(reservationId)
-    if target is None or target.status not in (ReservationStatus.READY, ReservationStatus.QUEUED):
+    if target is None or target.status not in (
+        ReservationStatus.READY,
+        ReservationStatus.QUEUED,
+        ReservationStatus.REQUEUED,
+    ):
         raise ValueError(f"reservation {reservationId!r} cannot be claimed")
-    if target.status is ReservationStatus.QUEUED and (
-        state.activeReservation is not None
-        or state.readyReservation is not None
-        or state.queuedReservations[0].reservationId != reservationId
+    if (
+        target.status in (ReservationStatus.QUEUED, ReservationStatus.REQUEUED)
+        and target.claimExpiresAt is None
+        and (
+            state.activeReservation is not None
+            or state.readyReservation is not None
+            or (
+                state.queuedReservations
+                and state.queuedReservations[0].reservationId != reservationId
+            )
+        )
     ):
         raise ValueError(f"reservation {reservationId!r} is not at the head of the queue")
 
@@ -996,6 +1037,11 @@ def evaluateTick(
     activeUserKeys = {
         normalizeUserKey(s.userName) for s in activeSessions if s.state is SessionState.ACTIVE
     }
+    activeClientAddresses = {
+        s.clientAddress.strip()
+        for s in activeSessions
+        if s.state is SessionState.ACTIVE and s.clientAddress and s.clientAddress.strip()
+    }
     working = list(state.reservations)
     handoff = state.handoff
     events: list[ReservationAuditEvent] = []
@@ -1003,65 +1049,79 @@ def evaluateTick(
 
     # 1. Complete ACTIVE reservation if its user is no longer connected and the PC is Available.
     for idx, res in enumerate(working):
-        if (
-            res.status is ReservationStatus.ACTIVE
-            and normalizeUserKey(res.userName) not in activeUserKeys
-            and pcAvailable
-        ):
-            working[idx] = replace(
-                res,
-                status=ReservationStatus.COMPLETED,
-                claimExpiresAt=None,
-                endedAt=now,
+        if res.status is ReservationStatus.ACTIVE and pcAvailable:
+            userActive = normalizeUserKey(res.userName) in activeUserKeys
+            ipActive = bool(
+                res.clientAddress and res.clientAddress.strip() in activeClientAddresses
             )
-            if handoff.reservationId == res.reservationId:
-                handoff = HandoffState.idle()
-            changed = True
-
-    # 2. Correlate READY reservation with an Active OS session for the same user.
-    for idx, res in enumerate(working):
-        if (
-            res.status is ReservationStatus.READY
-            and normalizeUserKey(res.userName) in activeUserKeys
-        ):
-            claimed = replace(
-                res,
-                status=ReservationStatus.ACTIVE,
-                claimExpiresAt=None,
-                activatedAt=now,
-            )
-            working[idx] = claimed
-            offeredBy = (
-                handoff.offeredByUserName if handoff.reservationId == res.reservationId else None
-            )
-            handoff = HandoffState(
-                status=HandoffStatus.CLAIMED,
-                reservationId=claimed.reservationId,
-                offeredByUserName=offeredBy,
-                targetUserName=claimed.userName,
-                offeredAt=handoff.offeredAt or now,
-                expiresAt=handoff.expiresAt or now,
-            )
-            events.append(
-                newReservationEvent(
-                    claimed,
-                    ReservationEventType.HANDOFF_CLAIMED,
-                    now,
-                    reason=reason,
-                    offeredByUserName=offeredBy,
+            if not userActive and not ipActive:
+                working[idx] = replace(
+                    res,
+                    status=ReservationStatus.COMPLETED,
+                    claimExpiresAt=None,
+                    endedAt=now,
                 )
-            )
-            changed = True
-            break
+                if handoff.reservationId == res.reservationId:
+                    handoff = HandoffState.idle()
+                changed = True
 
-    # 3. Direct correlation of head QUEUED reservation when no ACTIVE/READY exists.
+    # 2. Correlate READY / sole REQUEUED reservation with an Active OS session.
+    for idx, res in enumerate(working):
+        isReadyOrSoleRequeued = res.status is ReservationStatus.READY or (
+            res.status is ReservationStatus.REQUEUED and res.claimExpiresAt is not None
+        )
+        if isReadyOrSoleRequeued:
+            userMatches = normalizeUserKey(res.userName) in activeUserKeys
+            ipMatches = bool(
+                res.clientAddress and res.clientAddress.strip() in activeClientAddresses
+            )
+            if userMatches or ipMatches:
+                claimed = replace(
+                    res,
+                    status=ReservationStatus.ACTIVE,
+                    claimExpiresAt=None,
+                    activatedAt=now,
+                )
+                working[idx] = claimed
+                offeredBy = (
+                    handoff.offeredByUserName
+                    if handoff.reservationId == res.reservationId
+                    else None
+                )
+                handoff = HandoffState(
+                    status=HandoffStatus.CLAIMED,
+                    reservationId=claimed.reservationId,
+                    offeredByUserName=offeredBy,
+                    targetUserName=claimed.userName,
+                    offeredAt=handoff.offeredAt or now,
+                    expiresAt=handoff.expiresAt or now,
+                )
+                events.append(
+                    newReservationEvent(
+                        claimed,
+                        ReservationEventType.HANDOFF_CLAIMED,
+                        now,
+                        reason=reason,
+                        offeredByUserName=offeredBy,
+                    )
+                )
+                changed = True
+                break
+
+    # 3. Direct correlation of head waiting reservation when no ACTIVE/READY exists.
     hasActiveOrReady = any(
-        r.status in (ReservationStatus.ACTIVE, ReservationStatus.READY) for r in working
+        r.status in (ReservationStatus.ACTIVE, ReservationStatus.READY)
+        or (r.status is ReservationStatus.REQUEUED and r.claimExpiresAt is not None)
+        for r in working
     )
     if not hasActiveOrReady:
         for idx, res in enumerate(working):
-            if res.status is ReservationStatus.QUEUED:
-                if normalizeUserKey(res.userName) in activeUserKeys:
+            if res.status in (ReservationStatus.QUEUED, ReservationStatus.REQUEUED):
+                userMatches = normalizeUserKey(res.userName) in activeUserKeys
+                ipMatches = bool(
+                    res.clientAddress and res.clientAddress.strip() in activeClientAddresses
+                )
+                if userMatches or ipMatches:
                     claimed = replace(
                         res,
                         status=ReservationStatus.ACTIVE,
@@ -1089,56 +1149,113 @@ def evaluateTick(
                     changed = True
                 break
 
-    # 4. Expire READY reservation if its claim grace window has elapsed.
+    # 4. Re-queue READY (or sole active REQUEUED) reservation if claim grace window has elapsed.
     for idx, res in enumerate(working):
-        if (
-            res.status is ReservationStatus.READY
-            and res.claimExpiresAt is not None
-            and now >= res.claimExpiresAt
-        ):
-            expired = replace(
-                res,
-                status=ReservationStatus.EXPIRED,
-                claimExpiresAt=None,
-                endedAt=now,
-            )
-            working[idx] = expired
-            offeredBy = (
-                handoff.offeredByUserName if handoff.reservationId == res.reservationId else None
-            )
-            handoff = HandoffState(
-                status=HandoffStatus.TIMED_OUT,
-                reservationId=expired.reservationId,
-                offeredByUserName=offeredBy,
-                targetUserName=expired.userName,
-                offeredAt=handoff.offeredAt or res.readyAt or now,
-                expiresAt=res.claimExpiresAt,
-            )
-            events.append(
-                newReservationEvent(
-                    expired,
-                    ReservationEventType.RESERVATION_EXPIRED,
-                    now,
-                    reason=reason,
-                    offeredByUserName=offeredBy,
+        isReadyToClaim = res.status is ReservationStatus.READY or (
+            res.status is ReservationStatus.REQUEUED and res.claimExpiresAt is not None
+        )
+        if isReadyToClaim and res.claimExpiresAt is not None and now >= res.claimExpiresAt:
+            otherWaiting = [
+                r
+                for r in working
+                if r.reservationId != res.reservationId
+                and r.status in (ReservationStatus.QUEUED, ReservationStatus.REQUEUED)
+            ]
+            if not otherWaiting:
+                requeued = replace(
+                    res,
+                    status=ReservationStatus.REQUEUED,
+                    claimExpiresAt=None,
                 )
-            )
-            changed = True
+                working[idx] = requeued
+                offeredBy = (
+                    handoff.offeredByUserName
+                    if handoff.reservationId == res.reservationId
+                    else None
+                )
+                handoff = HandoffState(
+                    status=HandoffStatus.TIMED_OUT,
+                    reservationId=requeued.reservationId,
+                    offeredByUserName=offeredBy,
+                    targetUserName=requeued.userName,
+                    offeredAt=handoff.offeredAt or res.readyAt or now,
+                    expiresAt=res.claimExpiresAt,
+                )
+                events.append(
+                    newReservationEvent(
+                        requeued,
+                        ReservationEventType.RESERVATION_REQUEUED,
+                        now,
+                        reason=reason,
+                        offeredByUserName=offeredBy,
+                    )
+                )
+                changed = True
+            else:
+                requeued = replace(
+                    res,
+                    status=ReservationStatus.REQUEUED,
+                    claimExpiresAt=None,
+                )
+                nonTerminals = [
+                    r
+                    for r in working
+                    if not r.status.isTerminal and r.reservationId != res.reservationId
+                ]
+                terminals = [r for r in working if r.status.isTerminal]
+                working = nonTerminals + [requeued] + terminals
+                offeredBy = (
+                    handoff.offeredByUserName
+                    if handoff.reservationId == res.reservationId
+                    else None
+                )
+                handoff = HandoffState(
+                    status=HandoffStatus.TIMED_OUT,
+                    reservationId=requeued.reservationId,
+                    offeredByUserName=offeredBy,
+                    targetUserName=requeued.userName,
+                    offeredAt=handoff.offeredAt or res.readyAt or now,
+                    expiresAt=res.claimExpiresAt,
+                )
+                events.append(
+                    newReservationEvent(
+                        requeued,
+                        ReservationEventType.RESERVATION_REQUEUED,
+                        now,
+                        reason=reason,
+                        offeredByUserName=offeredBy,
+                    )
+                )
+                changed = True
             break
 
-    # 5. Advance queue head to READY if no ACTIVE/READY exists and PC is Available (or timed out).
+    # 5. Advance queue head to READY if no ACTIVE/READY exists and PC is Available
+    # (or timed out with next waiting).
     hasActiveOrReady = any(
-        r.status in (ReservationStatus.ACTIVE, ReservationStatus.READY) for r in working
+        r.status in (ReservationStatus.ACTIVE, ReservationStatus.READY)
+        or (r.status is ReservationStatus.REQUEUED and r.claimExpiresAt is not None)
+        for r in working
     )
     if not hasActiveOrReady and (pcAvailable or handoff.status is HandoffStatus.TIMED_OUT):
-        hasQueued = any(r.status is ReservationStatus.QUEUED for r in working)
-        if hasQueued:
+        hasEligibleQueued = any(
+            r.status in (ReservationStatus.QUEUED, ReservationStatus.REQUEUED)
+            and r.claimExpiresAt is None
+            and (
+                handoff.status is not HandoffStatus.TIMED_OUT
+                or r.reservationId != handoff.reservationId
+            )
+            for r in working
+        )
+        if hasEligibleQueued:
             working, handoff, promoEvents = _promoteHeadQueued(
                 working,
                 now,
                 offeredByUserName=None,
                 claimGraceSeconds=claimGraceSeconds,
                 reason=reason,
+                excludeReservationId=handoff.reservationId
+                if handoff.status is HandoffStatus.TIMED_OUT
+                else None,
             )
             events.extend(promoEvents)
             changed = True

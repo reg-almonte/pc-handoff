@@ -11,7 +11,6 @@ from streamlit.testing.v1 import AppTest
 
 from pc_handoff import launcher
 from pc_handoff.domain.reservations import (
-    CLAIM_GRACE_SECONDS,
     HandoffStatus,
     ReservationEventType,
     ReservationStatus,
@@ -140,11 +139,11 @@ class TestHandoffAcceptance:
             is ReservationStatus.READY
         )
 
-        # 5 minutes elapse without Bob claiming -> Bob expires, Carol auto-advances to READY
-        clock.advance(CLAIM_GRACE_SECONDS + 1)
+        # Grace period elapses without Bob claiming -> Bob re-queues, Carol auto-advances to READY
+        clock.advance(runtime.reservationManager.claimGraceSeconds + 1)
         runtime.pollOnce("t-3")
         qState = runtime.reservationManager.currentState()
-        assert qState.findById(rBob.reservationId).status is ReservationStatus.EXPIRED
+        assert qState.findById(rBob.reservationId).status is ReservationStatus.REQUEUED
         assert qState.findById(rCarol.reservationId).status is ReservationStatus.READY
         assert qState.handoff.status is HandoffStatus.OFFERED
         assert qState.handoff.targetUserName == "carol"
@@ -172,7 +171,7 @@ class TestHandoffAcceptance:
             (ReservationEventType.RESERVATION_QUEUED.value, "bob"),
             (ReservationEventType.RESERVATION_QUEUED.value, "carol"),
             (ReservationEventType.HANDOFF_INITIATED.value, "bob"),
-            (ReservationEventType.RESERVATION_EXPIRED.value, "bob"),
+            (ReservationEventType.RESERVATION_REQUEUED.value, "bob"),
             (ReservationEventType.HANDOFF_INITIATED.value, "carol"),
             (ReservationEventType.HANDOFF_CLAIMED.value, "carol"),
         ]

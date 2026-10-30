@@ -222,7 +222,7 @@ class TestDashboardReservationControls:
         # Also verify timed-out handoff banner on StatusView when queue is empty
         runtime.reservationManager.enqueueReservation("bob", 30)
         runtime.pollOnce()  # alice (no OS session) completes; bob becomes READY
-        clock.advance(301)
+        clock.advance(runtime.reservationManager.claimGraceSeconds + 1)
         runtime.pollOnce()  # bob's READY claim window expires -> TIMED_OUT with empty queue
         app.run()
         assert any("Handoff to bob timed out" in m for m in shown(app.markdown))
@@ -234,6 +234,6 @@ class TestDashboardReservationControls:
         runtime.reservationManager.enqueueReservation("charlie", 30)
         app.run()
         queueBtn = [b for b in app.button if b.key == "queueBadgeBtn"][0]
-        assert "charlie" in queueBtn.label
+        assert "bob" in queueBtn.label
         queueBtn.click().run()
         assert app.session_state.get("expander_queue_open") is True
