@@ -234,6 +234,11 @@ class AppRuntime:
 
     def publishState(self, state: TrackerState) -> None:
         with self.reservationManager.lock:
+            knownUsers = (
+                {ip: rec.displayName for ip, rec in self.knownUsersStore.load().items()}
+                if self.knownUsersStore is not None
+                else {}
+            )
             self.stateStore.publish(
                 DashboardSnapshot.fromState(
                     state,
@@ -242,6 +247,7 @@ class AppRuntime:
                     notices=self.notices,
                     pollIntervalSeconds=self.config.sessionPollIntervalSeconds,
                     queueState=self.reservationManager.currentState(),
+                    knownUsers=knownUsers,
                 )
             )
 

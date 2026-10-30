@@ -8,6 +8,7 @@ from pc_handoff.domain.reservations import (
     HandoffStatus,
     NoteCategory,
     QueueState,
+    ReservationStatus,
     emptyQueueState,
     enqueueReservation,
     evaluateTick,
@@ -206,3 +207,60 @@ class TestReservationViewModel:
         assert NavigationController.currentView(sessionState) == VIEW_MANAGE
         NavigationController.goToStatus(sessionState)
         assert NavigationController.currentView(sessionState) == VIEW_STATUS
+
+    def test_requeued_badge_display_and_editable(self) -> None:
+        q = enqueueReservation(emptyQueueState(T0), "alice", 30, T0).state
+        requeuedRes = replace(q.reservations[0], status=ReservationStatus.REQUEUED)
+        qRequeued = replace(q, reservations=(requeuedRes,))
+        vm = buildViewModel(snapshotWithQueue(qRequeued), T0)
+        row = vm.reservationRows[0]
+        assert row.status == "🔄 Re-queued"
+        assert row.canEdit is True
+
+    def test_active_row_enriched_with_known_users_real_name(self) -> None:
+        import uuid
+
+        from pc_handoff.detection.provider import ConnectionType
+        from pc_handoff.domain.models import PcStatus, SessionState, TrackedSession, UsagePeriod
+
+        period = UsagePeriod(
+            usagePeriodId=str(uuid.uuid4()),
+            usagePeriodStart=T0,
+            durationApproximate=False,
+            startEventTimestamp=T0,
+            connectTimeAtStart=T0,
+            connectionTypeAtStart=ConnectionType.RDP,
+        )
+        sess = TrackedSession(
+            sessionId=2,
+            userName="lab_user",
+            domain=None,
+            state=SessionState.ACTIVE,
+            connectionType=ConnectionType.RDP,
+            clientName="DESKTOP",
+            clientAddress="192.168.1.55",
+            logonTime=T0,
+            firstDetectedAt=T0,
+            connectTime=T0,
+            osDisconnectTime=None,
+            disconnectedSince=None,
+            openPeriod=period,
+        )
+        snap = replace(
+            snapshotWithQueue(emptyQueueState(T0)),
+            status=PcStatus.IN_USE,
+            sessions=(sess,),
+            knownUsers={"192.168.1.55": "John Doe"},
+        )
+        vm = buildViewModel(snap, T0)
+        assert vm.activeRows[0].user == "John Doe [lab_user]"
+        assert vm.badgeText == "🔴 In Use — John Doe [lab_user] (192.168.1.55)"
+
+        # When real name matches OS username
+        snapSame = replace(
+            snap,
+            knownUsers={"192.168.1.55": "lab_user"},
+        )
+        vmSame = buildViewModel(snapSame, T0)
+        assert vmSame.activeRows[0].user == "lab_user"
+        assert vmSame.badgeText == "🔴 In Use — lab_user (192.168.1.55)"

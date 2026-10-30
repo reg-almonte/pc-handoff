@@ -9,7 +9,7 @@ and never sees a half-updated state.
 import threading
 import uuid
 from collections.abc import Iterable
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime
 from enum import StrEnum
 
@@ -65,6 +65,7 @@ class DashboardSnapshot:
     notices: tuple[Notice, ...]
     pollIntervalSeconds: int
     queueState: QueueState
+    knownUsers: dict[str, str] = field(default_factory=dict)
 
     @classmethod
     def fromState(
@@ -76,6 +77,7 @@ class DashboardSnapshot:
         notices: Iterable[Notice],
         pollIntervalSeconds: int,
         queueState: QueueState | None = None,
+        knownUsers: dict[str, str] | None = None,
     ) -> "DashboardSnapshot":
         """The snapshot of ``state``, sessions in sessionId order and only the most recent
         ``MAX_NOTICES`` notices."""
@@ -91,6 +93,7 @@ class DashboardSnapshot:
             notices=tuple(notices)[-MAX_NOTICES:],
             pollIntervalSeconds=pollIntervalSeconds,
             queueState=emptyQueueState(updatedAt) if queueState is None else queueState,
+            knownUsers={} if knownUsers is None else dict(knownUsers),
         )
 
 
