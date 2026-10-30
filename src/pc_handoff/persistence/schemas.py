@@ -38,6 +38,7 @@ RESERVATION_EVENT_TYPE_VALUES = (
     "handoff_initiated",
     "handoff_claimed",
     "reservation_expired",
+    "reservation_requeued",
 )
 STATUS_NOTE_EVENT_TYPE = "status_note_posted"
 ALL_EVENT_TYPE_VALUES = (
@@ -48,7 +49,15 @@ ALL_EVENT_TYPE_VALUES = (
 REASON_VALUES = ("observed", "detected_after_outage", "detected_at_startup")
 END_CAUSE_VALUES = ("disconnect", "logoff", "reconnect_detected", "unknown")
 
-RESERVATION_STATUS_VALUES = ("QUEUED", "READY", "ACTIVE", "COMPLETED", "CANCELLED", "EXPIRED")
+RESERVATION_STATUS_VALUES = (
+    "QUEUED",
+    "READY",
+    "ACTIVE",
+    "COMPLETED",
+    "CANCELLED",
+    "EXPIRED",
+    "REQUEUED",
+)
 HANDOFF_STATUS_VALUES = ("IDLE", "OFFERED", "CLAIMED", "TIMED_OUT")
 NOTE_CATEGORY_VALUES = ("general", "urgent", "maintenance", "long_running")
 
@@ -164,15 +173,16 @@ KIND_CHECKS: dict[str, tuple[Callable[[Any], bool], str]] = {
 
 @dataclass(frozen=True)
 class FieldSpec:
-    """One required key of an object: its kind, nullability, allowed values and extra check.
+    """One expected key of an object: kind, nullability, optionality, allowed values, checks.
 
     ``check`` runs only on a non-null value of the right kind and returns an issue message or
-    None. Every listed key must be present, even when it is nullable.
+    None. Every listed key must be present unless ``optional=True``.
     """
 
     name: str
     kind: str
     nullable: bool = False
+    optional: bool = False
     enumValues: tuple[Any, ...] | None = None
     check: Callable[[Any], str | None] | None = None
 
@@ -189,7 +199,8 @@ def validateObject(obj: Any, specs: tuple[FieldSpec, ...], path: str) -> list[Va
     for spec in specs:
         fieldPath = f"{path}.{spec.name}"
         if spec.name not in obj:
-            issues.append(ValidationIssue(fieldPath, "missing"))
+            if not spec.optional:
+                issues.append(ValidationIssue(fieldPath, "missing"))
             continue
         value = obj[spec.name]
         if value is None:
@@ -333,6 +344,7 @@ OFFERED_BY_USER_NAME = FieldSpec(
 RESERVATION_NOTES = FieldSpec(
     "notes", "str", nullable=True, check=isBoundedNullableStr(MAX_NOTES_LENGTH)
 )
+RESERVATION_CLIENT_ADDRESS = FieldSpec("clientAddress", "str", nullable=True, optional=True)
 NOTE_MESSAGE = FieldSpec("message", "str", check=isBoundedNonEmptyStr(MAX_MESSAGE_LENGTH))
 
 RESERVATIONS_DOC_SPECS = (
@@ -384,6 +396,7 @@ RESERVATION_SPECS = (
     FieldSpec("claimExpiresAt", "isoDateTime", nullable=True),
     FieldSpec("activatedAt", "isoDateTime", nullable=True),
     FieldSpec("endedAt", "isoDateTime", nullable=True),
+    RESERVATION_CLIENT_ADDRESS,
 )
 
 TERMINAL_RESERVATION_NULL_RULES: dict[str, bool] = {
@@ -401,6 +414,10 @@ RESERVATION_STATE_RULES: dict[str, dict[str, bool]] = {
     "READY": {
         "readyAt": False,
         "claimExpiresAt": False,
+        "activatedAt": True,
+        "endedAt": True,
+    },
+    "REQUEUED": {
         "activatedAt": True,
         "endedAt": True,
     },
@@ -519,6 +536,7 @@ RESERVATION_EVENT_SPECS = (
     FieldSpec("reason", "str", enumValues=REASON_VALUES),
     OFFERED_BY_USER_NAME,
     RESERVATION_NOTES,
+    RESERVATION_CLIENT_ADDRESS,
 )
 
 STATUS_NOTE_EVENT_SPECS = (

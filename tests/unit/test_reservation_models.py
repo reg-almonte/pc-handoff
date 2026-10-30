@@ -52,10 +52,12 @@ def test_reservation_and_handoff_enums() -> None:
         "COMPLETED",
         "CANCELLED",
         "EXPIRED",
+        "REQUEUED",
     ]
     assert not ReservationStatus.QUEUED.isTerminal
     assert not ReservationStatus.READY.isTerminal
     assert not ReservationStatus.ACTIVE.isTerminal
+    assert not ReservationStatus.REQUEUED.isTerminal
     assert ReservationStatus.COMPLETED.isTerminal
     assert ReservationStatus.CANCELLED.isTerminal
     assert ReservationStatus.EXPIRED.isTerminal
@@ -74,6 +76,7 @@ def test_reservation_and_handoff_enums() -> None:
         "handoff_initiated",
         "handoff_claimed",
         "reservation_expired",
+        "reservation_requeued",
         "status_note_posted",
     ]
     assert HandoffSession is HandoffState
@@ -147,6 +150,30 @@ def test_reservation_json_round_trip() -> None:
     assert doc["status"] == "READY"
     assert doc["readyAt"] == "2026-10-23T19:05:00+09:00"
     assert Reservation.fromJson(json.loads(json.dumps(doc))) == res
+
+
+def test_reservation_client_address_and_requeued_round_trip() -> None:
+    res = Reservation(
+        reservationId=RES_ID,
+        userName="alice",
+        requestedDurationMinutes=60,
+        queuedAt=at(0),
+        status=ReservationStatus.REQUEUED,
+        notes="Testing",
+        clientAddress="192.168.1.55",
+    )
+    doc = res.toJson()
+    assert doc["status"] == "REQUEUED"
+    assert doc["clientAddress"] == "192.168.1.55"
+    assert Reservation.fromJson(json.loads(json.dumps(doc))) == res
+
+    event = newReservationEvent(res, ReservationEventType.RESERVATION_REQUEUED, at(10))
+    assert event.clientAddress == "192.168.1.55"
+    assert event.eventType == ReservationEventType.RESERVATION_REQUEUED
+    eventDoc = event.toJson()
+    assert eventDoc["clientAddress"] == "192.168.1.55"
+    assert eventDoc["eventType"] == "reservation_requeued"
+    assert ReservationAuditEvent.fromJson(json.loads(json.dumps(eventDoc))) == event
 
 
 def test_handoff_state_json_round_trip() -> None:

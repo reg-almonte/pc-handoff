@@ -41,18 +41,28 @@ SETTINGS: tuple[tuple[str, int, int, int], ...] = (
 )
 SCHEMA_VERSION_KEY = "schemaVersion"
 
-HOST_NOTIFICATION_METHODS: tuple[str, ...] = ("toast", "msg", "none")
+HOST_NOTIFICATION_METHODS: tuple[str, ...] = ("toast", "msg", "both", "none")
 DEFAULT_ENABLE_HOST_NOTIFICATIONS = True
-DEFAULT_HOST_NOTIFICATION_METHOD = "toast"
+DEFAULT_HOST_NOTIFICATION_METHOD = "both"
 DEFAULT_HOST_NOTIFICATION_TIMEOUT_SECONDS = 10
 MIN_HOST_NOTIFICATION_TIMEOUT_SECONDS = 2
 MAX_HOST_NOTIFICATION_TIMEOUT_SECONDS = 60
+
+DEFAULT_CLAIM_GRACE_MINUTES = 60
+MIN_CLAIM_GRACE_MINUTES = 1
+MAX_CLAIM_GRACE_MINUTES = 1440
+
+DEFAULT_ENABLE_TEAMS_NOTIFICATIONS = False
+DEFAULT_TEAMS_WEBHOOK_URL = ""
 
 OPTIONAL_KEYS: frozenset[str] = frozenset(
     {
         "enableHostNotifications",
         "hostNotificationMethod",
         "hostNotificationTimeoutSeconds",
+        "claimGraceMinutes",
+        "enableTeamsNotifications",
+        "teamsWebhookUrl",
     }
 )
 
@@ -68,6 +78,9 @@ class Config:
     enableHostNotifications: bool = DEFAULT_ENABLE_HOST_NOTIFICATIONS
     hostNotificationMethod: str = DEFAULT_HOST_NOTIFICATION_METHOD
     hostNotificationTimeoutSeconds: int = DEFAULT_HOST_NOTIFICATION_TIMEOUT_SECONDS
+    claimGraceMinutes: int = DEFAULT_CLAIM_GRACE_MINUTES
+    enableTeamsNotifications: bool = DEFAULT_ENABLE_TEAMS_NOTIFICATIONS
+    teamsWebhookUrl: str = DEFAULT_TEAMS_WEBHOOK_URL
 
 
 DEFAULT_CONFIG_DOCUMENT: dict[str, int] = {
@@ -166,6 +179,47 @@ def parseConfig(doc: dict[str, Any]) -> tuple[Config, list[str]]:
             )
         else:
             values["hostNotificationTimeoutSeconds"] = timeout
+
+    if "claimGraceMinutes" in doc:
+        grace = doc["claimGraceMinutes"]
+        if not isStrictInt(grace):
+            warnings.append(
+                "claimGraceMinutes: wrong type (expected integer); "
+                f"default {DEFAULT_CLAIM_GRACE_MINUTES} applied"
+            )
+        elif not (MIN_CLAIM_GRACE_MINUTES <= grace <= MAX_CLAIM_GRACE_MINUTES):
+            warnings.append(
+                f"claimGraceMinutes: {grace} out of range "
+                f"{MIN_CLAIM_GRACE_MINUTES}-{MAX_CLAIM_GRACE_MINUTES}; "
+                f"default {DEFAULT_CLAIM_GRACE_MINUTES} applied"
+            )
+        else:
+            values["claimGraceMinutes"] = grace
+
+    if "enableTeamsNotifications" in doc:
+        teamsEnabled = doc["enableTeamsNotifications"]
+        if not isinstance(teamsEnabled, bool):
+            warnings.append(
+                "enableTeamsNotifications: wrong type (expected boolean); "
+                f"default {DEFAULT_ENABLE_TEAMS_NOTIFICATIONS} applied"
+            )
+        else:
+            values["enableTeamsNotifications"] = teamsEnabled
+
+    if "teamsWebhookUrl" in doc:
+        url = doc["teamsWebhookUrl"]
+        if not isinstance(url, str):
+            warnings.append(
+                "teamsWebhookUrl: wrong type (expected string); "
+                f"default {DEFAULT_TEAMS_WEBHOOK_URL!r} applied"
+            )
+        elif url and not (url.startswith("https://") or url.startswith("http://")):
+            warnings.append(
+                "teamsWebhookUrl: invalid URL (expected http:// or https://); "
+                f"default {DEFAULT_TEAMS_WEBHOOK_URL!r} applied"
+            )
+        else:
+            values["teamsWebhookUrl"] = url.strip()
 
     known = {SCHEMA_VERSION_KEY, *(name for name, _, _, _ in SETTINGS), *OPTIONAL_KEYS}
     warnings.extend(f"{key}: unknown setting ignored" for key in doc if key not in known)

@@ -273,3 +273,26 @@ def test_invalid_reservation_and_status_note_events_are_reported() -> None:
     assert paths(validateActivityDocument({"schemaVersion": 1, "events": [noteJson]})) == [
         "$.events[0].message"
     ]
+
+
+def test_requeued_reservation_and_event_pass_schema_validation() -> None:
+    res = Reservation(
+        reservationId=RES_ID_1,
+        userName="bob",
+        requestedDurationMinutes=60,
+        queuedAt=at(0),
+        status=ReservationStatus.REQUEUED,
+        clientAddress="192.168.1.55",
+    )
+    resDoc = {
+        "schemaVersion": 1,
+        "updatedAt": "2026-10-23T19:00:00+09:00",
+        "handoff": HandoffState.idle().toJson(),
+        "reservations": [res.toJson()],
+        "statusNotes": [],
+    }
+    assert validateReservationsDocument(resDoc) == []
+
+    ev = newReservationEvent(res, ReservationEventType.RESERVATION_REQUEUED, at(10))
+    actDoc = {"schemaVersion": 1, "events": [ev.toJson()]}
+    assert validateActivityDocument(actDoc) == []

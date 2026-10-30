@@ -31,11 +31,14 @@ def test_config_default_notification_fields() -> None:
     assert cfg.enableHostNotifications is DEFAULT_ENABLE_HOST_NOTIFICATIONS
     assert cfg.hostNotificationMethod == DEFAULT_HOST_NOTIFICATION_METHOD
     assert cfg.hostNotificationTimeoutSeconds == DEFAULT_HOST_NOTIFICATION_TIMEOUT_SECONDS
-    assert HOST_NOTIFICATION_METHODS == ("toast", "msg", "none")
+    assert HOST_NOTIFICATION_METHODS == ("toast", "msg", "both", "none")
+    assert cfg.claimGraceMinutes == 60
+    assert cfg.enableTeamsNotifications is False
+    assert cfg.teamsWebhookUrl == ""
 
 
 @pytest.mark.parametrize("enabled", [True, False])
-@pytest.mark.parametrize("method", ["toast", "msg", "none"])
+@pytest.mark.parametrize("method", ["toast", "msg", "both", "none"])
 @pytest.mark.parametrize(
     "timeout",
     [
@@ -71,11 +74,11 @@ def test_parse_config_notification_wrong_types_and_bounds_fall_back_with_warning
         )
     )
     assert cfg.enableHostNotifications is True
-    assert cfg.hostNotificationMethod == "toast"
+    assert cfg.hostNotificationMethod == "both"
     assert cfg.hostNotificationTimeoutSeconds == 10
     assert warnings == [
         "enableHostNotifications: wrong type (expected boolean); default True applied",
-        "hostNotificationMethod: wrong type (expected string); default 'toast' applied",
+        "hostNotificationMethod: wrong type (expected string); default 'both' applied",
         "hostNotificationTimeoutSeconds: wrong type (expected integer); default 10 applied",
     ]
 
@@ -85,11 +88,11 @@ def test_parse_config_notification_wrong_types_and_bounds_fall_back_with_warning
             hostNotificationTimeoutSeconds=1,
         )
     )
-    assert cfg2.hostNotificationMethod == "toast"
+    assert cfg2.hostNotificationMethod == "both"
     assert cfg2.hostNotificationTimeoutSeconds == 10
     assert warnings2 == [
-        "hostNotificationMethod: 'webhook' is not one of 'toast', 'msg', 'none'; "
-        "default 'toast' applied",
+        "hostNotificationMethod: 'webhook' is not one of 'toast', 'msg', 'both', 'none'; "
+        "default 'both' applied",
         "hostNotificationTimeoutSeconds: 1 out of range 2-60; default 10 applied",
     ]
 
@@ -97,4 +100,46 @@ def test_parse_config_notification_wrong_types_and_bounds_fall_back_with_warning
     assert cfg3.hostNotificationTimeoutSeconds == 10
     assert warnings3 == [
         "hostNotificationTimeoutSeconds: 61 out of range 2-60; default 10 applied",
+    ]
+
+
+def test_parse_config_claim_grace_and_teams_settings() -> None:
+    cfg, warnings = parseConfig(
+        baseDoc(
+            claimGraceMinutes=120,
+            enableTeamsNotifications=True,
+            teamsWebhookUrl="https://prod.westus.logic.azure.com/workflows/123",
+        )
+    )
+    assert warnings == []
+    assert cfg.claimGraceMinutes == 120
+    assert cfg.enableTeamsNotifications is True
+    assert cfg.teamsWebhookUrl == "https://prod.westus.logic.azure.com/workflows/123"
+
+    cfgBad, badWarnings = parseConfig(
+        baseDoc(
+            claimGraceMinutes="60",
+            enableTeamsNotifications="true",
+            teamsWebhookUrl=999,
+        )
+    )
+    assert cfgBad.claimGraceMinutes == 60
+    assert cfgBad.enableTeamsNotifications is False
+    assert cfgBad.teamsWebhookUrl == ""
+    assert badWarnings == [
+        "claimGraceMinutes: wrong type (expected integer); default 60 applied",
+        "enableTeamsNotifications: wrong type (expected boolean); default False applied",
+        "teamsWebhookUrl: wrong type (expected string); default '' applied",
+    ]
+
+    cfgRange, rangeWarnings = parseConfig(
+        baseDoc(
+            claimGraceMinutes=0,
+            teamsWebhookUrl="ftp://invalid.com",
+        )
+    )
+    assert cfgRange.claimGraceMinutes == 60
+    assert rangeWarnings == [
+        "claimGraceMinutes: 0 out of range 1-1440; default 60 applied",
+        "teamsWebhookUrl: invalid URL (expected http:// or https://); default '' applied",
     ]

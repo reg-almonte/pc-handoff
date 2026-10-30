@@ -18,6 +18,8 @@ from pc_handoff.clock import Clock
 from pc_handoff.persistence.paths import (
     ACTIVITY_LOG_FILE_NAME,
     CONFIG_FILE_NAME,
+    KNOWN_USERS_FILE_NAME,
+    RESERVATIONS_FILE_NAME,
     STATUS_FILE_NAME,
 )
 
@@ -26,7 +28,13 @@ REPLACE_RETRY_SLEEP_SECONDS = 0.02
 TEMP_MARKER = ".tmp-"
 CORRUPT_MARKER = ".corrupt-"
 BACKUP_TIME_FORMAT = "%Y%m%dT%H%M%S"
-MANAGED_FILE_NAMES = (CONFIG_FILE_NAME, STATUS_FILE_NAME, ACTIVITY_LOG_FILE_NAME)
+MANAGED_FILE_NAMES = (
+    CONFIG_FILE_NAME,
+    STATUS_FILE_NAME,
+    ACTIVITY_LOG_FILE_NAME,
+    RESERVATIONS_FILE_NAME,
+    KNOWN_USERS_FILE_NAME,
+)
 
 moduleLogger = logging.getLogger(f"{LOGGER_NAME}.persistence.atomic")
 
