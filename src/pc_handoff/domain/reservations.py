@@ -51,6 +51,7 @@ class ReservationStatus(StrEnum):
     COMPLETED = "COMPLETED"
     CANCELLED = "CANCELLED"
     EXPIRED = "EXPIRED"
+    REQUEUED = "REQUEUED"
 
     @property
     def isTerminal(self) -> bool:
@@ -88,6 +89,7 @@ class ReservationEventType(StrEnum):
     HANDOFF_INITIATED = "handoff_initiated"
     HANDOFF_CLAIMED = "handoff_claimed"
     RESERVATION_EXPIRED = "reservation_expired"
+    RESERVATION_REQUEUED = "reservation_requeued"
     STATUS_NOTE_POSTED = "status_note_posted"
 
 
@@ -182,6 +184,7 @@ class Reservation:
     claimExpiresAt: datetime | None = None
     activatedAt: datetime | None = None
     endedAt: datetime | None = None
+    clientAddress: str | None = None
 
     def toJson(self) -> dict[str, Any]:
         return {
@@ -195,6 +198,7 @@ class Reservation:
             "claimExpiresAt": isoOrNone(self.claimExpiresAt),
             "activatedAt": isoOrNone(self.activatedAt),
             "endedAt": isoOrNone(self.endedAt),
+            "clientAddress": self.clientAddress,
         }
 
     @classmethod
@@ -211,6 +215,7 @@ class Reservation:
                 claimExpiresAt=parseIsoOrNone(doc["claimExpiresAt"]),
                 activatedAt=parseIsoOrNone(doc["activatedAt"]),
                 endedAt=parseIsoOrNone(doc["endedAt"]),
+                clientAddress=doc.get("clientAddress"),
             )
 
         return convertJson("reservation", build)
@@ -390,6 +395,7 @@ class ReservationAuditEvent:
     message: str | None = None
     expiresAt: datetime | None = None
     category: NoteCategory | None = None
+    clientAddress: str | None = None
 
     def toJson(self) -> dict[str, Any]:
         if self.eventType is ReservationEventType.STATUS_NOTE_POSTED:
@@ -420,6 +426,7 @@ class ReservationAuditEvent:
             "reason": self.reason.value,
             "offeredByUserName": self.offeredByUserName,
             "notes": self.notes,
+            "clientAddress": self.clientAddress,
         }
 
     @classmethod
@@ -449,6 +456,7 @@ class ReservationAuditEvent:
                 requestedDurationMinutes=validateDurationMinutes(doc["requestedDurationMinutes"]),
                 offeredByUserName=None if offeredBy is None else validateUserName(offeredBy),
                 notes=validateNotes(doc["notes"]),
+                clientAddress=doc.get("clientAddress"),
             )
 
         return convertJson("reservation audit event", build)
@@ -471,6 +479,7 @@ def newReservationEvent(
         requestedDurationMinutes=reservation.requestedDurationMinutes,
         offeredByUserName=offeredByUserName,
         notes=reservation.notes,
+        clientAddress=reservation.clientAddress,
     )
 
 
@@ -573,6 +582,7 @@ def enqueueReservation(
     now: datetime,
     *,
     notes: str | None = None,
+    clientAddress: str | None = None,
     pcAvailable: bool = False,
     claimGraceSeconds: int = CLAIM_GRACE_SECONDS,
 ) -> TransitionOutcome:
@@ -584,6 +594,7 @@ def enqueueReservation(
     cleanUser = validateUserName(userName)
     cleanDuration = validateDurationMinutes(requestedDurationMinutes)
     cleanNotes = validateNotes(notes)
+    cleanAddress = clientAddress.strip() if clientAddress and clientAddress.strip() else None
 
     if state.findByUser(cleanUser) is not None:
         raise ValueError(f"user {cleanUser!r} already has an active or queued reservation")
@@ -595,6 +606,7 @@ def enqueueReservation(
         queuedAt=now,
         status=ReservationStatus.QUEUED,
         notes=cleanNotes,
+        clientAddress=cleanAddress,
     )
     events: list[ReservationAuditEvent] = [
         newReservationEvent(created, ReservationEventType.RESERVATION_QUEUED, now)
