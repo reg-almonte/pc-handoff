@@ -44,7 +44,15 @@ def handleJoinQueue(manager) -> None:
     userName = st.session_state.get("joinUserName", "")
     duration = int(st.session_state.get("joinDurationMinutes", 60))
     notes = st.session_state.get("joinNotes", "") or None
-    _runAction(lambda: manager.enqueueReservation(userName, duration, notes=notes))
+    clientAddress = st.session_state.get("joinClientAddress", "").strip() or None
+    _runAction(
+        lambda: manager.enqueueReservation(
+            userName,
+            duration,
+            notes=notes,
+            clientAddress=clientAddress,
+        )
+    )
 
 
 def handleUpdateReservation(manager, reservationId: str) -> None:
@@ -89,6 +97,22 @@ def handlePostStatusNote(manager) -> None:
 
 def handleClearNote(manager, noteId: str) -> None:
     _runAction(lambda: manager.clearStatusNote(noteId))
+
+
+def handleTestNotification(manager) -> None:
+    notifier = getattr(manager, "notifier", None)
+    if notifier is not None:
+        from pc_handoff.notifications.notifier import HostNotification
+
+        notifier.notify(
+            HostNotification(
+                title="PC Handoff: Test Notification",
+                body="Host PC notification system is working properly.",
+            )
+        )
+        st.session_state["testNotificationMessage"] = (
+            "Notification sent! Check your PC screen / Teams."
+        )
 
 
 def renderManageView(runtime, model: DashboardViewModel) -> None:
@@ -152,7 +176,16 @@ def renderManageView(runtime, model: DashboardViewModel) -> None:
                     step=15,
                     key="joinDurationMinutes",
                 )
-            st.text_input("Notes (optional)", key="joinNotes", max_chars=280)
+            ipCol, notesCol = st.columns([1, 2])
+            with ipCol:
+                st.text_input(
+                    "Client IP address (optional)",
+                    key="joinClientAddress",
+                    max_chars=45,
+                    help="Your machine IP address for automatic handoff detection",
+                )
+            with notesCol:
+                st.text_input("Notes (optional)", key="joinNotes", max_chars=280)
             st.button("Join Queue", key="joinQueueBtn", on_click=handleJoinQueue, args=(manager,))
 
         with st.container(border=True):
@@ -224,6 +257,18 @@ def renderManageView(runtime, model: DashboardViewModel) -> None:
             file_name="pc-handoff.rdp",
             mime="application/x-rdp",
             key="downloadRdpBtn",
+        )
+        st.divider()
+        st.subheader("🔔 Test Host Notification", anchor=False)
+        testMsg = st.session_state.pop("testNotificationMessage", None)
+        if testMsg:
+            st.success(escapeMarkdown(testMsg))
+        st.button(
+            "🔔 Test Host Notification",
+            key="testNotificationBtn",
+            on_click=handleTestNotification,
+            args=(manager,),
+            help="Dispatch a test notification to verify msg.exe, toast, and Teams delivery",
         )
 
     with tabNotes:

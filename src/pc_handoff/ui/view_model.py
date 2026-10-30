@@ -298,9 +298,12 @@ def buildViewModel(snapshot: DashboardSnapshot, now: datetime) -> DashboardViewM
     # While Unknown, durations are frozen at the last successful poll (REQ AC-11); without
     # one there is nothing to freeze at.
     durationsAt: datetime | None = pollAt if unknown else now
+    knownUsers = getattr(snapshot, "knownUsers", {}) or {}
 
     activeRows = tuple(
-        activeRow(s, durationsAt) for s in snapshot.sessions if s.state is SessionState.ACTIVE
+        activeRow(s, durationsAt, knownUsers=knownUsers)
+        for s in snapshot.sessions
+        if s.state is SessionState.ACTIVE
     )
     disconnectedRows = tuple(
         disconnectedRow(s) for s in snapshot.sessions if s.state is SessionState.DISCONNECTED
@@ -379,7 +382,12 @@ def badgeTextFor(status: PcStatus, activeRows: Sequence[ActiveRow]) -> str:
     return status.value
 
 
-def activeRow(session: TrackedSession, durationsAt: datetime | None) -> ActiveRow:
+def activeRow(
+    session: TrackedSession,
+    durationsAt: datetime | None,
+    *,
+    knownUsers: dict[str, str] | None = None,
+) -> ActiveRow:
     period = session.openPeriod
     if period is None:  # defensive: an Active session always has an open period
         periodStart = duration = UNKNOWN_TEXT
@@ -393,8 +401,19 @@ def activeRow(session: TrackedSession, durationsAt: datetime | None) -> ActiveRo
             if period.durationApproximate:
                 duration += APPROX_SUFFIX
     isConsole = session.connectionType is ConnectionType.CONSOLE
+
+    userDisplay = displayOrUnknown(session.userName)
+    if not isConsole and knownUsers and session.clientAddress:
+        cleanIp = session.clientAddress.strip()
+        if cleanIp in knownUsers:
+            realName = knownUsers[cleanIp]
+            if realName.strip().lower() == session.userName.strip().lower():
+                userDisplay = realName
+            else:
+                userDisplay = f"{realName} [{session.userName}]"
+
     return ActiveRow(
-        user=displayOrUnknown(session.userName),
+        user=userDisplay,
         connectionType=displayOrUnknown(session.connectionType.value),
         clientName=NOT_APPLICABLE_TEXT if isConsole else displayOrUnknown(session.clientName),
         clientIp=NOT_APPLICABLE_TEXT if isConsole else displayOrUnknown(session.clientAddress),
@@ -449,19 +468,21 @@ def reservationRow(
     else:
         countdown = "-"
     canClaim = res.status is ReservationStatus.READY or res.reservationId == headQueuedId
+    canEdit = res.status in (ReservationStatus.QUEUED, ReservationStatus.REQUEUED)
     rawNotes = sanitize(res.notes) if res.notes else ""
+    statusDisplay = "🔄 Re-queued" if res.status is ReservationStatus.REQUEUED else res.status.value
     return ReservationRow(
         reservationId=res.reservationId,
         position=str(position),
         user=displayOrUnknown(res.userName),
-        status=res.status.value,
+        status=statusDisplay,
         requestedDuration=f"{res.requestedDurationMinutes} min",
         queuedAt=formatTime(res.queuedAt),
         claimCountdown=countdown,
         notes=rawNotes if rawNotes else "-",
         canClaim=canClaim,
         canCancel=True,
-        canEdit=res.status is ReservationStatus.QUEUED,
+        canEdit=canEdit,
         durationMinutes=res.requestedDurationMinutes,
         rawNotes=rawNotes,
     )

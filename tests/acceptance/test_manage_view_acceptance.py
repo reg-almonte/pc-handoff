@@ -160,3 +160,31 @@ class TestManageViewAcceptance:
         )
         assert noteEvent["category"] == "maintenance"
         assert resDoc["statusNotes"][0]["category"] == "maintenance"
+
+    def test_manage_view_client_ip_and_test_notification(self, tmp_path: Path, monkeypatch) -> None:
+        dataDir = tmp_path / "data"
+        dataDir.mkdir()
+        clock = FakeClock(T0)
+        provider = FakeSessionProvider([])
+        runtime = launcher.buildRuntime(dataDir, provider, clock)
+        runtime.pollOnce("t-1")
+        registry.registerRuntime(runtime)
+
+        app = AppTest.from_file(SCRIPT, default_timeout=TIMEOUT).run()
+        app.button(key=NAV_TO_MANAGE_KEY).click().run()
+        assert not app.exception
+
+        # Enqueue with client IP
+        app.text_input(key="joinUserName").set_value("Dave")
+        app.text_input(key="joinClientAddress").set_value("192.168.1.77")
+        app.button(key="joinQueueBtn").click().run()
+        assert not app.exception
+
+        res = runtime.reservationManager.currentState().findByUser("Dave")
+        assert res is not None
+        assert res.clientAddress == "192.168.1.77"
+
+        # Click Test Host Notification button
+        app.button(key="testNotificationBtn").click().run()
+        assert not app.exception
+        assert any("Notification sent!" in s for s in shown(app.success))
